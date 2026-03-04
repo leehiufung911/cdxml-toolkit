@@ -45,7 +45,7 @@ pip install -e ".[dev]"
 
 ## Quick(?) Start
 
-Honestly? Maybe try using this repository with Claude Code/Opencode/Windsurf/another agent. The endgame is meant to be like "Hey, help me make the scheme for these reactions"
+Honestly? Maybe try using this repository with Claude Code/Opencode/Windsurf/another agent. The endgame is meant to be like "Hey, help me make the scheme for these reactions", and the agent just goes and does the things you ask.
 I uploaded a CLAUDE.MD. This is meant to be read as reference by both humans and LLMs. 
 
 ## Quick Start — JSON-First Pipeline
