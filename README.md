@@ -168,7 +168,7 @@ No ChemDraw COM needed — structures are generated from SMILES via RDKit.
 
 ## Bundled Samples
 
-The `samples/` directory contains two real ELN exports (Buchwald coupling and SNAr alkylation) with full pipeline output:
+The `samples/` directory contains two real ELN exports (Buchwald, ortho-lithiation then alkylation) with full pipeline output:
 
 ```
 samples/
