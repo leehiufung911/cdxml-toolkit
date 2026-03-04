@@ -13,7 +13,7 @@ Such tools may be run on their own, or as I envision, used/called by an LLM agen
 IMPORTANT:
 Project is in a VERY early state. 
 Do NOT be surprised if things don't work.
-There are a bunch of dependencies that are easy to install (RDKit), some that may be more finnicky (Chemscript, Chemdraw if it doesn't autodetect)
+There are a bunch of dependencies that are easy to install (RDKit), some that may be more finnicky (Chemscript, Chemdraw if it doesn't autodetect. **Chemdraw (COM) is an IMPORTANT DEPENDENCY. There are fallbacks, but I haven't validated how well they work**)
 This was made on a machine with Chemdraw 16. 
 I will validate and fix things gradually.
 
