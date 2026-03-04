@@ -19,7 +19,7 @@ I will validate and fix things gradually.
 
 Professionally, I do not have much programming background. I am a just a PhD organic chemist trying to make life easier hopefully for myself and my fellow chemists. 
 
-**I leaned heavily on Claude Code in the making of this project.** I directed, refined, debugged, and figured out the broad design of things, but Claude Code did basically all of the actual coding.
+**I leaned heavily on Claude Code in the making of this project.** I directed, refined, debugged, and figured out the broad design of things, but Claude Code (Opus 4.6) did basically all of the actual coding.
 
 Note that LLMs (even frontier models) are terrible at judging whether a chemical structure is correct, as well as whether a scheme is correctly spaced... they're even bad at writing SMILES. This is why the design decision was made to have a source of chemical truth (JSON, parsed from CDX files/other ELN files), have a script or an LLM declare the layout of a scheme with a YAML file (but not actually place objects), and have a layout engine (renderer.py) deterministically place objects at the right places. This affords flexibility for the LLM to choose the scheme layout it wants, but avoids its weaknesses of being bad at chemistry and layout/design.
 
