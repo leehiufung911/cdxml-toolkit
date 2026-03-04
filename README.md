@@ -126,7 +126,6 @@ db.display_for_name("hatu")      # "HATU" (from ChemScanner tier-2)
 | RDKit | Structure alignment, MW calculation, SMILES, 2D coords | `[rdkit]` |
 | PyYAML | YAML scheme parsing | `[yaml]` |
 | pywin32 | ChemDraw COM automation (Windows only) | `[chemdraw]` |
-| pdfplumber | LCMS PDF parsing | `[pdf]` |
 | python-pptx, python-docx, olefile | Office document support | `[office]` |
 | OpenCV, Pillow | Image-based structure extraction | `[image]` |
 
