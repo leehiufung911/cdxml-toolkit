@@ -154,7 +154,7 @@ def match_csv_to_scheme(
     -------
     EnrichmentData with all matches + product info.
     """
-    from procedure_writer import parse_eln_csv
+    from .eln_csv_parser import parse_eln_csv
     from .reagent_db import get_reagent_db
 
     def log(msg: str):
@@ -627,7 +627,7 @@ def reposition_reactant_above_arrow(
     -------
     True if a fragment was repositioned, False otherwise.
     """
-    from procedure_writer import parse_eln_csv
+    from .eln_csv_parser import parse_eln_csv
 
     def log(msg: str):
         if verbose:

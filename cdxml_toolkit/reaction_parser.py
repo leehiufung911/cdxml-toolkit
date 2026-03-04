@@ -914,9 +914,9 @@ def _match_csv_data(species: List[SpeciesDescriptor],
     warnings = []
 
     try:
-        from procedure_writer import parse_eln_csv
+        from .eln_csv_parser import parse_eln_csv
     except ImportError:
-        warnings.append("procedure_writer not available for CSV parsing")
+        warnings.append("eln_csv_parser not available for CSV parsing")
         return species, warnings, None
 
     exp_data = parse_eln_csv(csv_path)

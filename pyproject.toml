@@ -30,11 +30,10 @@ dependencies = [
 [project.optional-dependencies]
 rdkit = ["rdkit>=2023.03"]
 chemdraw = ["pywin32>=300"]
-pdf = ["pdfplumber>=0.7"]
 image = ["opencv-python>=4.5", "Pillow>=9.0"]
 office = ["python-pptx>=0.6", "python-docx>=0.8", "olefile>=0.46"]
 yaml = ["pyyaml>=5.4"]
-all = ["cdxml-toolkit[rdkit,chemdraw,pdf,office,yaml]"]
+all = ["cdxml-toolkit[rdkit,chemdraw,office,yaml]"]
 dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
 
 [project.urls]
