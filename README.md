@@ -4,6 +4,8 @@ Python toolkit for ChemDraw CDXML reaction scheme processing, layout, and render
 
 Built for organic/medicinal chemists who work with reaction schemes in ChemDraw. Reads, writes, and manipulates CDXML files programmatically — build publication-ready reaction schemes from SMILES, clean up ELN exports, render schemes from declarative YAML, and more.
 
+TLDR: Best feature currently is being able to specify a reaction scheme in a text format (YAML or mermaid like) and get a .cdxml chemdraw scheme. Lots of other little utilities also, like OLE embedding into docx/pptx
+
 PROJECT INTENT: 
 Broadly/in the long run, to build out a toolkit to make organic chemistry office work more automatable (A LOT of which involves chemdraw)
 Such tools may be run on their own, or as I envision, used/called by an LLM agent 
