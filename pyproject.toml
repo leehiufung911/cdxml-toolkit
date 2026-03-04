@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cdxml-toolkit"
+version = "0.5.0"
+description = "Python toolkit for ChemDraw CDXML reaction scheme processing, layout, and rendering."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Hiu Fung Kevin Lee"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "lxml>=4.6",
+]
+
+[project.optional-dependencies]
+rdkit = ["rdkit>=2023.03"]
+chemdraw = ["pywin32>=300"]
+pdf = ["pdfplumber>=0.7"]
+image = ["opencv-python>=4.5", "Pillow>=9.0"]
+office = ["python-pptx>=0.6", "python-docx>=0.8", "olefile>=0.46"]
+yaml = ["pyyaml>=5.4"]
+all = ["cdxml-toolkit[rdkit,chemdraw,pdf,office,yaml]"]
+dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/leehiufung911/cdxml-toolkit"
+Repository = "https://github.com/leehiufung911/cdxml-toolkit"
+Issues = "https://github.com/leehiufung911/cdxml-toolkit/issues"
+
+[project.scripts]
+cdxml-render = "cdxml_toolkit.dsl.render_scheme:main"
+cdxml-layout = "cdxml_toolkit.reaction_cleanup:main"
+cdxml-build = "cdxml_toolkit.cdxml_builder:main"
+cdxml-convert = "cdxml_toolkit.cdx_converter:main"
+cdxml-image = "cdxml_toolkit.cdxml_to_image:main"
+cdxml-polish = "cdxml_toolkit.scheme_polisher_v2:main"
+cdxml-parse = "cdxml_toolkit.reaction_parser:main"
+cdxml-merge = "cdxml_toolkit.scheme_merger:main"
+cdxml-ole = "cdxml_toolkit.ole_embedder:main"
+
+[tool.setuptools.packages.find]
+include = ["cdxml_toolkit*"]
+
+[tool.setuptools.package-data]
+cdxml_toolkit = ["*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "network: tests requiring internet access",
+]
