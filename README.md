@@ -19,7 +19,7 @@ I will validate and fix things gradually.
 
 Professionally, I do not have much programming background. I am a just a PhD organic chemist trying to make life easier hopefully for myself and my fellow chemists. 
 
-**!!I leaned heavily on Claude Code in the making of this project!!**
+**I leaned heavily on Claude Code in the making of this project**
 I would like to express immense gratitude to Anthropic for making such a revolutionary product. Without it, these ideas would only be random musings in my brain, since I do not have the programming skill to implement any of this in any reasonable amount of time otherwise.
 
 ## Installation
