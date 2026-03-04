@@ -43,6 +43,11 @@ cd cdxml-toolkit
 pip install -e ".[dev]"
 ```
 
+## Quick Start
+
+Honestly? Maybe try using this repository with Claude Code. The endgame is meant to be like "Hey, help me make the scheme for these reactions"
+I re-uploaded a CLAUDE.MD. This is meant to be read as reference by both humans and LLMs. 
+
 ## Quick Start — JSON-First Pipeline
 
 The recommended workflow builds publication-ready schemes from ELN export files in two steps:
