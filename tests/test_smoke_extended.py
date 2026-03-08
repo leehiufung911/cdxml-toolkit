@@ -1,14 +1,14 @@
 """Extended smoke tests — CLI tools not covered by test_smoke.py.
 
 Tools tested here:
-  - discover_experiment_files.py  (pure Python, imports lcms_analyzer)
   - cas_resolver.py               (pure Python + PubChem HTTP)
   - scheme_aligner.py             (requires RDKit)
-  - prepare_reaction_scheme.py    (--no-polish path = pure Python)
   - ole_extractor.py              (requires olefile)
-  - procedure_writer.py           (pure Python + LCMS parsing, CSV fallback)
   - eln_enrichment.py             (library module, import + match_csv_to_scheme)
   - reactant_heuristic.py         (CLI with cdxml/smiles subcommands)
+
+Pipeline-specific tools (discover_experiment_files, prepare_reaction_scheme,
+procedure_writer, query_status) are tested in the private chem-pipeline repo.
 """
 
 import glob
@@ -48,82 +48,6 @@ def _assert_valid_cdxml(path):
     tree = ET.parse(path)
     root = tree.getroot()
     assert root.tag == "CDXML", f"unexpected root tag: {root.tag}"
-
-
-# =========================================================================
-# discover_experiment_files.py — experiment file discovery
-# =========================================================================
-
-class TestDiscoverExperimentFiles:
-    """Smoke tests for discover_experiment_files.py."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.input_dir = os.path.join(
-            TEST_DATA, "procedurefilltest", "KL-7001-incomplete"
-        )
-        if not os.path.isdir(self.input_dir):
-            pytest.skip("KL-7001-incomplete test data not found")
-
-    def test_text_output_contains_file_categories(self):
-        r = _run([
-            PYTHON, "discover_experiment_files.py",
-            "--input-dir", self.input_dir,
-            "--experiment", "KL-7001-004",
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        text = r.stdout
-        # Text report should mention the main file categories
-        assert "CSV" in text, "output should mention CSV files"
-        assert "LCMS" in text, "output should mention LCMS files"
-        assert "KL-7001-004" in text, "output should echo experiment name"
-
-    def test_json_output_has_expected_structure(self, tmp_path):
-        out = os.path.join(str(tmp_path), "discover.json")
-        r = _run([
-            PYTHON, "discover_experiment_files.py",
-            "--input-dir", self.input_dir,
-            "--experiment", "KL-7001-004",
-            "--json",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-
-        with open(out) as f:
-            data = json.load(f)
-        assert data["experiment"] == "KL-7001-004"
-        files = data["files"]
-        assert "csv" in files
-        assert "lcms" in files
-        assert "cdx" in files
-        assert "rxn" in files
-        assert "nmr" in files
-        # KL-7001-004 has at least a CSV
-        assert len(files["csv"]) >= 1, "should find at least one CSV file"
-
-    def test_lcms_entries_have_categories(self, tmp_path):
-        out = os.path.join(str(tmp_path), "discover.json")
-        r = _run([
-            PYTHON, "discover_experiment_files.py",
-            "--input-dir", self.input_dir,
-            "--experiment", "KL-7001-004",
-            "--json",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-
-        with open(out) as f:
-            data = json.load(f)
-        lcms = data["files"]["lcms"]
-        if lcms:  # may be empty if LCMS PDFs aren't in expected location
-            for entry in lcms:
-                assert "path" in entry
-                assert "category" in entry
-                assert "sort_key" in entry
-                assert entry["category"] in (
-                    "tracking", "workup", "purification", "final", "other"
-                )
 
 
 # =========================================================================
@@ -229,58 +153,6 @@ class TestSchemeAligner:
 
 
 # =========================================================================
-# prepare_reaction_scheme.py — no-polish path (pure Python only)
-# =========================================================================
-
-class TestPrepareReactionScheme:
-    """Smoke tests for prepare_reaction_scheme.py.
-
-    Only tests the --no-polish + --cdxml path, which calls reaction_cleanup.py
-    (pure Python). The full pipeline requires ChemDraw COM.
-    """
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        # Use a CDXML with a reaction scheme
-        self.cdxml = os.path.join(TEST_DATA, "Buchwald-output scheme.cdxml")
-        if not os.path.isfile(self.cdxml):
-            pytest.skip("Buchwald-output scheme.cdxml not found")
-
-    def test_no_polish_produces_valid_cdxml(self, tmp_path):
-        out = os.path.join(str(tmp_path), "prepared.cdxml")
-        r = _run([
-            PYTHON, "prepare_reaction_scheme.py",
-            "--cdxml", self.cdxml,
-            "-o", out,
-            "--no-polish",
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        _assert_valid_cdxml(out)
-
-    def test_json_output_reports_layout_step(self, tmp_path):
-        out = os.path.join(str(tmp_path), "prepared.cdxml")
-        r = _run([
-            PYTHON, "prepare_reaction_scheme.py",
-            "--cdxml", self.cdxml,
-            "-o", out,
-            "--no-polish",
-            "--json",
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        data = json.loads(r.stdout)
-        assert "steps_completed" in data
-        assert "layout" in data["steps_completed"]
-        assert data.get("error") is None
-
-    def test_missing_file_returns_error(self):
-        r = _run([
-            PYTHON, "prepare_reaction_scheme.py",
-            "--cdxml", "nonexistent_file.cdxml",
-        ])
-        assert r.returncode != 0
-
-
-# =========================================================================
 # ole_extractor.py — OLE ChemDraw extraction from Office files
 # =========================================================================
 
@@ -334,110 +206,6 @@ class TestOleExtractor:
             "nonexistent_file.pptx",
         ])
         assert r.returncode != 0
-
-
-# =========================================================================
-# procedure_writer.py — lab book entry assembler
-# =========================================================================
-
-KL7001_DIR = os.path.join(
-    TEST_DATA, "procedurefilltest", "KL-7001-incomplete"
-)
-
-
-class TestProcedureWriter:
-    """Smoke tests for procedure_writer.py.
-
-    Uses KL-7001-004 experiment data (Mitsunobu). ChemScript is optional —
-    mass resolution falls back to CSV MW values.
-    """
-
-    @pytest.fixture(autouse=True)
-    def setup(self, tmp_path):
-        self.tmp = tmp_path
-        if not os.path.isdir(KL7001_DIR):
-            pytest.skip("KL-7001-incomplete test data not found")
-
-    def test_runs_and_exits_zero(self):
-        out = os.path.join(str(self.tmp), "procedure.txt")
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-7001-004",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-        assert os.path.getsize(out) > 0
-
-    def test_output_contains_procedure_section(self):
-        out = os.path.join(str(self.tmp), "procedure.txt")
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-7001-004",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        with open(out) as f:
-            text = f.read()
-        assert "PROCEDURE" in text, "output should contain PROCEDURE section"
-
-    def test_output_contains_characterization_section(self):
-        out = os.path.join(str(self.tmp), "procedure.txt")
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-7001-004",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        with open(out) as f:
-            text = f.read()
-        assert "CHARACTERIZATION" in text, (
-            "output should contain CHARACTERIZATION section"
-        )
-
-    def test_output_contains_notes_section(self):
-        out = os.path.join(str(self.tmp), "procedure.txt")
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-7001-004",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        with open(out) as f:
-            text = f.read()
-        assert "NOTES" in text, "output should contain NOTES section"
-
-    def test_output_contains_mass_spec_data(self):
-        out = os.path.join(str(self.tmp), "procedure.txt")
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-7001-004",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        with open(out) as f:
-            text = f.read()
-        # LCMS data uses adduct notation: [M+H]+, [M-H]-, [M+Na]+, etc.
-        assert "[M" in text, (
-            "output should contain mass adduct data (e.g. [M+H]+) from LCMS"
-        )
-
-    def test_missing_experiment_produces_placeholders(self):
-        """Nonexistent experiment exits 0 but produces placeholder text."""
-        r = _run([
-            PYTHON, "procedure_writer.py",
-            "--input-dir", KL7001_DIR,
-            "--experiment", "KL-NONEXISTENT-999",
-        ])
-        assert r.returncode == 0
-        # Should still produce the three sections, but with placeholder text
-        assert "PROCEDURE" in r.stdout
-        assert "not available" in r.stdout.lower()
 
 
 # =========================================================================
@@ -727,67 +495,6 @@ class TestSchemeMerger:
             pytest.fail("Should have raised ValueError for mismatched products")
         except ValueError as e:
             assert "different products" in str(e).lower()
-
-
-# ===================================================================
-# query_status.py — pipeline status introspection
-# ===================================================================
-
-class TestQueryStatus:
-    """Smoke tests for query_status.py."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self):
-        self.input_dir = os.path.join(
-            TEST_DATA, "procedurefilltest", "KL-7001-incomplete"
-        )
-        if not os.path.isdir(self.input_dir):
-            pytest.skip("KL-7001-incomplete test data not found")
-
-    def test_list_mode_shows_experiments(self):
-        r = _run([
-            PYTHON, "query_status.py",
-            "--input-dir", self.input_dir,
-            "--list",
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert "Experiments" in r.stdout
-        assert "KL-7001-004" in r.stdout
-
-    def test_list_mode_json(self):
-        r = _run([
-            PYTHON, "query_status.py",
-            "--input-dir", self.input_dir,
-            "--list", "--json",
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        data = json.loads(r.stdout)
-        assert "experiments" in data
-        assert isinstance(data["experiments"], list)
-        assert len(data["experiments"]) >= 1
-
-    def test_experiment_detail_json(self, tmp_path):
-        out = os.path.join(str(tmp_path), "status.json")
-        r = _run([
-            PYTHON, "query_status.py",
-            "--input-dir", self.input_dir,
-            "--experiments", "KL-7001-004",
-            "--json",
-            "--output", out,
-        ])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-
-        with open(out) as f:
-            data = json.load(f)
-        assert isinstance(data, list)
-        assert len(data) == 1
-        exp = data[0]
-        assert exp["experiment"] == "KL-7001-004"
-        assert "input" in exp
-        assert "csv" in exp["input"]
-        assert "lcms_count" in exp["input"]
-        assert "nmr_count" in exp["input"]
 
 
 # =========================================================================

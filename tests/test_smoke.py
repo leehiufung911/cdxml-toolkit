@@ -6,6 +6,9 @@ Chemical correctness is validated separately by the chemist.
 Tools requiring ChemDraw COM are skipped:
   scheme_polisher.py, cdx_converter.py, cdxml_to_image.py,
   eln_cdx_cleanup.py, ole_embedder.py, chemscript_bridge.py
+
+Pipeline-specific tools (lcms_analyzer, multi_lcms_analyzer, procedure_writer,
+etc.) are tested in the private chem-pipeline repo.
 """
 
 import glob
@@ -24,9 +27,6 @@ PYTHON = sys.executable  # use the same interpreter running pytest
 TEST_DATA = os.environ.get(
     "CHEM_TEST_DATA",
     os.path.join(os.path.dirname(PROJECT_ROOT), "chem-test-data"),
-)
-LCMS_DIR = os.path.join(
-    TEST_DATA, "procedurefilltest", "KL-7001-incomplete", "LCMS files"
 )
 
 
@@ -49,87 +49,6 @@ def _assert_valid_cdxml(path):
     tree = ET.parse(path)
     root = tree.getroot()
     assert root.tag == "CDXML", f"unexpected root tag: {root.tag}"
-
-
-# =========================================================================
-# lcms_analyzer.py — single-file LCMS PDF parsing
-# =========================================================================
-
-class TestLcmsAnalyzer:
-    """Smoke tests for lcms_analyzer.py."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self, tmp_path):
-        self.tmp = tmp_path
-        # Pick one LCMS PDF
-        pdfs = sorted(glob.glob(os.path.join(LCMS_DIR, "KL-7001-004-0min.pdf")))
-        if not pdfs:
-            pytest.skip("No LCMS PDFs found in test_data")
-        self.pdf = pdfs[0]
-
-    def test_runs_and_produces_output(self):
-        out = os.path.join(self.tmp, "lcms_out.txt")
-        r = _run([PYTHON, "lcms_analyzer.py", self.pdf, "--output", out])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-        assert os.path.getsize(out) > 0
-
-    def test_output_contains_expected_sections(self):
-        r = _run([PYTHON, "lcms_analyzer.py", self.pdf])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        text = r.stdout
-        # lcms_analyzer outputs peak tables; check for detector names
-        assert "Peak" in text or "RT" in text or "m/z" in text, (
-            "output missing expected LCMS content"
-        )
-
-
-# =========================================================================
-# multi_lcms_analyzer.py — cross-file LCMS collation
-# =========================================================================
-
-class TestMultiLcmsAnalyzer:
-    """Smoke tests for multi_lcms_analyzer.py."""
-
-    @pytest.fixture(autouse=True)
-    def setup(self, tmp_path):
-        self.tmp = tmp_path
-        self.pdfs = sorted(glob.glob(os.path.join(LCMS_DIR, "KL-7001-004-*.pdf")))
-        if len(self.pdfs) < 2:
-            pytest.skip("Need >=2 LCMS PDFs for multi_lcms_analyzer")
-
-    def test_runs_with_multiple_pdfs(self):
-        out = os.path.join(self.tmp, "multi_out.txt")
-        r = _run(
-            [PYTHON, "multi_lcms_analyzer.py"] + self.pdfs[:4] + ["--output", out]
-        )
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-        assert os.path.getsize(out) > 0
-
-    def test_output_has_reaction_summary(self):
-        r = _run([PYTHON, "multi_lcms_analyzer.py"] + self.pdfs[:4])
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        text = r.stdout
-        # multi_lcms_analyzer produces "Reaction summary" and "Compound" sections
-        assert "ompound" in text or "RT" in text, (
-            "output missing expected multi-LCMS content"
-        )
-
-    def test_json_output_parses(self):
-        out = os.path.join(self.tmp, "multi_out.json")
-        # Use --ignore-instrument to get a single JSON object even if
-        # PDFs come from different instruments.
-        r = _run(
-            [PYTHON, "multi_lcms_analyzer.py"]
-            + self.pdfs[:4]
-            + ["--json", "--ignore-instrument", "--output", out]
-        )
-        assert r.returncode == 0, f"stderr: {r.stderr}"
-        assert os.path.isfile(out)
-        with open(out) as f:
-            data = json.load(f)
-        assert isinstance(data, dict)
 
 
 # =========================================================================
