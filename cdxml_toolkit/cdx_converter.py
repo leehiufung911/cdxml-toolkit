@@ -184,14 +184,14 @@ def _pycdxml_convert_file(input_path: str, output_path: str) -> None:
     in_ext = os.path.splitext(input_path)[1].lower()
     if in_ext == ".cdx":
         doc = _pycdxml.read_cdx(input_path)
-        _pycdxml.write_cdxml_file(doc, output_path)
+        cdxml_str = doc.to_cdxml()
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(cdxml_str)
     elif in_ext == ".cdxml":
         doc = _pycdxml.read_cdxml(input_path)
         _pycdxml.write_cdx_file(doc, output_path)
     else:
         raise ValueError(f"Unsupported input extension: {in_ext}")
-    if output_path.lower().endswith(".cdxml"):
-        sanitise_cdxml_file(output_path)
 
 
 def _pycdxml_cdx_to_cdxml(cdx_data: bytes) -> str:
@@ -199,16 +199,12 @@ def _pycdxml_cdx_to_cdxml(cdx_data: bytes) -> str:
     with tempfile.NamedTemporaryFile(suffix=".cdx", delete=False) as tmp_in:
         tmp_in.write(cdx_data)
         tmp_in_path = tmp_in.name
-    tmp_out_path = tmp_in_path.replace(".cdx", ".cdxml")
     try:
         doc = _pycdxml.read_cdx(tmp_in_path)
-        _pycdxml.write_cdxml_file(doc, tmp_out_path)
-        with open(tmp_out_path, "r", encoding="utf-8") as f:
-            return f.read()
+        return doc.to_cdxml()
     finally:
-        for p in (tmp_in_path, tmp_out_path):
-            if os.path.exists(p):
-                os.unlink(p)
+        if os.path.exists(tmp_in_path):
+            os.unlink(tmp_in_path)
 
 
 def _pycdxml_cdxml_to_cdx(cdxml_data: str) -> bytes:
