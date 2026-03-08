@@ -450,26 +450,36 @@ def _build_text_element(
     ids: _IDGen,
     justification: str = "Center",
     use_formatting: bool = True,
+    font_size: Optional[float] = None,
 ) -> Tuple[str, int]:
     """
     Build a standalone <t> element for condition text.
 
+    Parameters
+    ----------
+    font_size : float, optional
+        Override font size (default: ACS_CAPTION_SIZE, typically 10pt).
+
     Returns (xml_string, text_xml_id).
     """
+    size = float(font_size if font_size is not None else ACS_CAPTION_SIZE)
+    scale = size / float(ACS_CAPTION_SIZE)
+    char_w = _CHAR_WIDTH * scale
+    cap_h = _CAP_HEIGHT * scale
+    descent = _DESCENT * scale
+    line_adv = _LINE_ADVANCE * scale
+
     tid = ids.next()
     z = ids.next()
 
     max_chars = max((len(ln) for ln in text_lines), default=1)
     n = len(text_lines)
-    w = max_chars * _CHAR_WIDTH
-    # p.y is the BASELINE of the first line.
-    # Visual top = p.y - _CAP_HEIGHT; visual bottom = last baseline + _DESCENT
-    h = _CAP_HEIGHT + max(0, n - 1) * _LINE_ADVANCE + _DESCENT
+    w = max_chars * char_w
 
     bx1 = x - w / 2.0
-    by1 = y - _CAP_HEIGHT
+    by1 = y - cap_h
     bx2 = x + w / 2.0
-    by2 = y + max(0, n - 1) * _LINE_ADVANCE + _DESCENT
+    by2 = y + max(0, n - 1) * line_adv + descent
 
     parts = [
         f'<t id="{tid}" p="{x:.2f} {y:.2f}" '
@@ -489,7 +499,7 @@ def _build_text_element(
             run = build_formatted_s_xml(
                 line,
                 font=ACS_LABEL_FONT,
-                size=ACS_CAPTION_SIZE,
+                size=size,
                 color="0",
             )
             if i < len(text_lines) - 1:
@@ -503,7 +513,7 @@ def _build_text_element(
     else:
         text = "\n".join(xml_escape(ln) for ln in text_lines)
         parts.append(
-            f'<s font="{ACS_LABEL_FONT}" size="{ACS_CAPTION_SIZE}" '
+            f'<s font="{ACS_LABEL_FONT}" size="{size}" '
             f'color="0" face="{ACS_CAPTION_FACE}">{text}</s>'
         )
 
@@ -767,12 +777,13 @@ def _build_run_arrow(
     all_ids.append(inp_id)
 
     # Output label (right of arrow) — center text vertically on arrow
-    out_xml, out_id = _build_text_element(
-        [output_label], head_x + 5.0, label_baseline_y, ids,
-        justification="Left", use_formatting=False,
-    )
-    parts.append(out_xml)
-    all_ids.append(out_id)
+    if output_label:
+        out_xml, out_id = _build_text_element(
+            [output_label], head_x + 5.0, label_baseline_y, ids,
+            justification="Left", use_formatting=False,
+        )
+        parts.append(out_xml)
+        all_ids.append(out_id)
 
     return "\n".join(parts), all_ids
 
@@ -1401,7 +1412,10 @@ def _layout_divergent(
                 n_abt = len(above_text)
                 text_below_baseline = max(0, n_abt - 1) * _LINE_ADVANCE + _DESCENT
                 text_y = branch_y - LAYOUT_BELOW_GAP - text_below_baseline
-                txt_xml, txt_id = _build_text_element(above_text, arrow_mid_x, text_y, ids)
+                txt_xml, txt_id = _build_text_element(
+                    above_text, arrow_mid_x, text_y, ids,
+                    use_formatting=False,
+                )
                 xml_parts.append(txt_xml)
                 step_meta["above_ids"].append(txt_id)
 
@@ -1587,6 +1601,20 @@ def _layout_stacked_rows(
         return _layout_linear(scheme, ids, source_data=source_data,
                               reference_mol=reference_mol)
 
+    # --- Partition run_arrows by section ---
+    # Global step numbers are 1-indexed across all sections.  Build a map
+    # from global step number → (section_index, local_step_number).
+    global_step = 1
+    sec_run_arrows: Dict[int, List[StepRunArrows]] = {}
+    for sec_idx, sec in enumerate(sections):
+        for local_step in range(1, len(sec.steps) + 1):
+            # Map this global step to this section
+            for sra in scheme.run_arrows:
+                if sra.step == global_step:
+                    sec_run_arrows.setdefault(sec_idx, []).append(
+                        StepRunArrows(step=local_step, runs=sra.runs))
+            global_step += 1
+
     xml_parts: List[str] = []
     arrow_y = 300.0
     lowest_y = arrow_y
@@ -1613,6 +1641,9 @@ def _layout_stacked_rows(
         if sec_ref_mol is None:
             sec_ref_mol = reference_mol  # fallback to global
 
+        # --- Run arrows for this section ---
+        section_ra = sec_run_arrows.get(sec_idx, [])
+
         # --- Render this section's steps ---
         # Create a temporary sub-scheme sharing the structure definitions
         sub_scheme = SchemeDescriptor(
@@ -1621,22 +1652,13 @@ def _layout_stacked_rows(
             layout=sec.layout or "linear",
         )
 
-        if len(sec.steps) == 1 and (sec.layout or "linear") == "linear":
-            # Single step: use _layout_steps_row directly for precise control
-            row_xml, row_lowest, _, _ = _layout_steps_row(
-                sub_scheme, sec.steps, ids,
-                start_x=content_start_x, arrow_y=arrow_y,
-                source_data=source_data,
-                reference_mol=sec_ref_mol,
-            )
-        else:
-            # Multi-step section: use _layout_steps_row for sequential
-            row_xml, row_lowest, _, _ = _layout_steps_row(
-                sub_scheme, sec.steps, ids,
-                start_x=content_start_x, arrow_y=arrow_y,
-                source_data=source_data,
-                reference_mol=sec_ref_mol,
-            )
+        row_xml, row_lowest, _, _ = _layout_steps_row(
+            sub_scheme, sec.steps, ids,
+            start_x=content_start_x, arrow_y=arrow_y,
+            source_data=source_data,
+            run_arrows=section_ra,
+            reference_mol=sec_ref_mol,
+        )
 
         xml_parts.append(row_xml)
         lowest_y = row_lowest
@@ -1951,6 +1973,7 @@ def _layout_steps_row(
                 pass  # text_y is already correct
             txt_xml, txt_id = _build_text_element(
                 rs.above_text, arrow_mid_x, text_y, ids,
+                use_formatting=False,
             )
             xml_parts.append(txt_xml)
             step_meta["above_ids"].append(txt_id)
@@ -2113,6 +2136,18 @@ def _layout_steps_row(
             run_head_x = rs.arrow_head_x
 
             for run_entry in sra.runs:
+                if run_entry.note:
+                    # Text centered above this specific run arrow
+                    note_y = run_y - 1.0
+                    note_xml, _ = _build_text_element(
+                        [run_entry.note],
+                        (run_tail_x + run_head_x) / 2.0,
+                        note_y, ids,
+                        justification="Center",
+                        use_formatting=False,
+                    )
+                    xml_parts.append(note_xml)
+                    run_y += 10.0  # space for note text
                 run_xml, _ = _build_run_arrow(
                     run_tail_x, run_head_x,
                     run_y,

@@ -63,9 +63,10 @@ def main():
     )
     parser.add_argument(
         "--from-json",
+        nargs="+",
         default=None,
         metavar="JSON",
-        help="Render directly from a reaction_parser JSON file",
+        help="Render from one or more reaction_parser JSON files",
     )
     parser.add_argument(
         "-o", "--output",
@@ -97,37 +98,83 @@ def main():
 
     # --- Handle --from-json mode ---
     if args.from_json:
-        json_path = args.from_json
-        if not os.path.exists(json_path):
-            print(f"Error: JSON file not found: {json_path}", file=sys.stderr)
-            sys.exit(1)
+        json_paths = args.from_json
+        for jp in json_paths:
+            if not os.path.exists(jp):
+                print(f"Error: JSON file not found: {jp}", file=sys.stderr)
+                sys.exit(1)
 
-        # Output CDXML path
-        output_path = args.output
-        if output_path is None:
-            stem = os.path.splitext(os.path.basename(json_path))[0]
-            output_path = os.path.join(
-                os.path.dirname(json_path) or ".", f"{stem}-scheme.cdxml")
+        include_run = not args.no_run_arrows
 
-        # Step 1: JSON → YAML (layout decisions happen here)
-        yaml_path = os.path.splitext(output_path)[0] + ".yaml"
+        if len(json_paths) == 1:
+            # Single JSON: existing behavior
+            json_path = json_paths[0]
+            output_path = args.output
+            if output_path is None:
+                stem = os.path.splitext(os.path.basename(json_path))[0]
+                output_path = os.path.join(
+                    os.path.dirname(json_path) or ".", f"{stem}-scheme.cdxml")
+
+            yaml_path = os.path.splitext(output_path)[0] + ".yaml"
+            if args.verbose:
+                print(f"Writing scheme YAML: {json_path} -> {yaml_path}",
+                      file=sys.stderr)
+
+            try:
+                write_scheme_yaml(
+                    json_path, yaml_path,
+                    layout=args.layout,
+                    include_run_arrows=include_run,
+                )
+            except Exception as e:
+                print(f"YAML writer error: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            # Multiple JSONs: produce individual + merged
+            output_path = args.output
+            if output_path is None:
+                output_path = os.path.join(
+                    os.path.dirname(json_paths[0]) or ".",
+                    "merged-scheme.cdxml")
+
+            # Individual files
+            for jp in json_paths:
+                stem = os.path.splitext(os.path.basename(jp))[0]
+                ind_yaml = os.path.join(
+                    os.path.dirname(jp) or ".", f"{stem}-scheme.yaml")
+                ind_cdxml = os.path.join(
+                    os.path.dirname(jp) or ".", f"{stem}-scheme.cdxml")
+                try:
+                    write_scheme_yaml(jp, ind_yaml, layout=args.layout,
+                                      include_run_arrows=include_run)
+                    ind_scheme = parse_yaml(ind_yaml)
+                    ind_dir = os.path.dirname(os.path.abspath(ind_yaml))
+                    render_to_file(ind_scheme, ind_cdxml, yaml_dir=ind_dir)
+                    if args.verbose:
+                        print(f"Individual: {ind_cdxml}", file=sys.stderr)
+                except Exception as e:
+                    print(f"Warning: individual render failed for {jp}: {e}",
+                          file=sys.stderr)
+
+            # Merged YAML
+            yaml_path = os.path.splitext(output_path)[0] + ".yaml"
+            if args.verbose:
+                print(f"Writing merged YAML: {yaml_path}", file=sys.stderr)
+
+            try:
+                from .scheme_yaml_writer import write_merged_scheme_yaml
+                write_merged_scheme_yaml(
+                    json_paths, yaml_path,
+                    layout=args.layout,
+                    include_run_arrows=include_run,
+                )
+            except Exception as e:
+                print(f"Merged YAML writer error: {e}", file=sys.stderr)
+                sys.exit(1)
+
+        # Render YAML → CDXML
         if args.verbose:
-            print(f"Writing scheme YAML: {json_path} → {yaml_path}",
-                  file=sys.stderr)
-
-        try:
-            write_scheme_yaml(
-                json_path, yaml_path,
-                layout=args.layout,
-                include_run_arrows=not args.no_run_arrows,
-            )
-        except Exception as e:
-            print(f"YAML writer error: {e}", file=sys.stderr)
-            sys.exit(1)
-
-        # Step 2: YAML → SchemeDescriptor → CDXML (pure rendering)
-        if args.verbose:
-            print(f"Rendering: {yaml_path} → {output_path}", file=sys.stderr)
+            print(f"Rendering: {yaml_path} -> {output_path}", file=sys.stderr)
 
         try:
             scheme = parse_yaml(yaml_path)
@@ -136,9 +183,11 @@ def main():
             sys.exit(1)
 
         if args.verbose:
+            n_steps = len(scheme.steps) + sum(
+                len(s.steps) for s in scheme.sections)
             print(
                 f"  {len(scheme.structures)} structures, "
-                f"{len(scheme.steps)} steps, "
+                f"{n_steps} steps, "
                 f"layout={scheme.layout}",
                 file=sys.stderr,
             )

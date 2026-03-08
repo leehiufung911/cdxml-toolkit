@@ -291,11 +291,15 @@ def _parse_run_arrows(data: Any) -> StepRunArrows:
             raise SchemeParseError(f"run entry must be a mapping")
         inp = r.get("input", "")
         out = r.get("output", "")
-        if not inp or not out:
+        if not inp:
             raise SchemeParseError(
-                f"run entry must have 'input' and 'output' fields"
+                f"run entry must have an 'input' field"
             )
-        runs.append(RunArrowEntry(input_label=str(inp), output_label=str(out)))
+        note = r.get("note")
+        if note is not None:
+            note = str(note)
+        runs.append(RunArrowEntry(input_label=str(inp), output_label=str(out),
+                                  note=note))
     return StepRunArrows(step=step, runs=runs)
 
 

@@ -47,6 +47,7 @@ class RunArrowEntry:
     """A single run (one scale) of a reaction step."""
     input_label: str         # e.g. "2.15 g"
     output_label: str        # e.g. "1.60 g, 72% yield"
+    note: Optional[str] = None  # per-run annotation, e.g. "HATU (1.2 eq)"
 
 
 @dataclass

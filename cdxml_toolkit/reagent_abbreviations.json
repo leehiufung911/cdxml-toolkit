@@ -878,9 +878,10 @@
         "smiles": "COCCOC"
     },
     "chloroform": {
-        "display": "chloroform",
+        "display": "CHCl3",
         "role": "solvent",
-        "smiles": "ClC(Cl)Cl"
+        "smiles": "ClC(Cl)Cl",
+        "aliases": ["chcl3"]
     },
     "benzene": {
         "display": "benzene",
@@ -895,7 +896,7 @@
     "heptane": {
         "display": "heptane",
         "role": "solvent",
-        "smiles": "CC(C)CC(C)C"
+        "smiles": "CCCCCCC"
     },
     "tempo": {
         "display": "TEMPO",
@@ -916,5 +917,50 @@
         "display": "CuBr",
         "role": "catalyst",
         "smiles": "[Cu]Br"
+    },
+    "n-butanol": {
+        "display": "n-BuOH",
+        "role": "solvent",
+        "smiles": "CCCCO",
+        "aliases": ["nbuoh", "1-butanol"]
+    },
+    "ccl4": {
+        "display": "CCl4",
+        "role": "solvent",
+        "smiles": "ClC(Cl)(Cl)Cl",
+        "aliases": ["carbon tetrachloride"]
+    },
+    "chlorobenzene": {
+        "display": "PhCl",
+        "role": "solvent",
+        "smiles": "Clc1ccccc1"
+    },
+    "cyclohexane": {
+        "display": "cyclohexane",
+        "role": "solvent",
+        "smiles": "C1CCCCC1"
+    },
+    "et2o": {
+        "display": "Et2O",
+        "role": "solvent",
+        "smiles": "CCOCC",
+        "aliases": ["diethyl ether"]
+    },
+    "hmpa": {
+        "display": "HMPA",
+        "role": "solvent",
+        "smiles": "CN(C)P(=O)(N(C)C)N(C)C",
+        "aliases": ["hexamethylphosphoramide"]
+    },
+    "pentane": {
+        "display": "pentane",
+        "role": "solvent",
+        "smiles": "CCCCC"
+    },
+    "d2o": {
+        "display": "D2O",
+        "role": "solvent",
+        "smiles": "[2H]O[2H]",
+        "aliases": ["deuterium oxide", "heavy water"]
     }
 }
