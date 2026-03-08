@@ -4,6 +4,29 @@ Python toolkit for ChemDraw CDXML reaction scheme processing, layout, and render
 
 Built for organic/medicinal chemists who work with reaction schemes in ChemDraw. Reads, writes, and manipulates CDXML files programmatically — build publication-ready reaction schemes from SMILES, clean up ELN exports, render schemes from declarative YAML, and more.
 
+TLDR: Best feature currently is being able to specify a reaction scheme in a text format (YAML or mermaid like) and get a .cdxml chemdraw scheme. Lots of other little utilities also, like OLE embedding into docx/pptx
+
+PROJECT INTENT: 
+Broadly/in the long run, to build out a toolkit to make organic chemistry office work more automatable (A LOT of which involves chemdraw)
+Such tools may be run on their own, or as I envision, used/called by an LLM agent 
+
+(Prime example: DSL which allows LLM to write a YAML or mermaid description of a scheme, which is then rendered into a .cdxml using renderer.py)
+
+IMPORTANT:
+Project is in a VERY early state. 
+Do NOT be surprised if things don't work.
+There are a bunch of dependencies that are easy to install (RDKit), some that may be more finnicky (Chemscript, Chemdraw if it doesn't autodetect. **Chemdraw (COM) is an IMPORTANT DEPENDENCY. There are fallbacks, but I haven't validated how well they work**)
+This was made on a machine with Chemdraw 16. 
+I will validate and fix things gradually.
+
+Professionally, I do not have much programming background. I am a just a PhD organic chemist trying to make life easier hopefully for myself and my fellow chemists. 
+
+**I leaned heavily on Claude Code in the making of this project.** I directed, refined, debugged, and figured out the broad design of things, but Claude Code (Opus 4.6) did basically all of the actual coding.
+
+Note that LLMs (even frontier models) are terrible at judging whether a chemical structure is correct, as well as whether a scheme is correctly spaced... they're even bad at writing SMILES. This is why the design decision was made to have a source of chemical truth (JSON, parsed from CDX files/other ELN files), have a script or an LLM declare the layout of a scheme with a YAML file (but not actually place objects), and have a layout engine (renderer.py) deterministically place objects at the right places. This affords flexibility for the LLM to choose the scheme layout it wants, but avoids its weaknesses of being bad at chemistry and layout/design.
+
+I would like to express immense gratitude to Anthropic for making such a revolutionary product. Without it, these ideas would only be random musings in my brain, since I do not have the programming skill to implement any of this in any reasonable amount of time otherwise.
+
 ## Installation
 
 ```bash
@@ -21,6 +44,11 @@ git clone https://github.com/leehiufung911/cdxml-toolkit.git
 cd cdxml-toolkit
 pip install -e ".[dev]"
 ```
+
+## Quick(?) Start
+
+Honestly? Maybe try using this repository with Claude Code/Opencode/Windsurf/another agent. The endgame is meant to be like "Hey, help me make the scheme for these reactions", and the agent just goes and does the things you ask.
+I uploaded a CLAUDE.MD. This is meant to be read as reference by both humans and LLMs. 
 
 ## Quick Start — JSON-First Pipeline
 
@@ -105,7 +133,6 @@ db.display_for_name("hatu")      # "HATU" (from ChemScanner tier-2)
 | RDKit | Structure alignment, MW calculation, SMILES, 2D coords | `[rdkit]` |
 | PyYAML | YAML scheme parsing | `[yaml]` |
 | pywin32 | ChemDraw COM automation (Windows only) | `[chemdraw]` |
-| pdfplumber | LCMS PDF parsing | `[pdf]` |
 | python-pptx, python-docx, olefile | Office document support | `[office]` |
 | OpenCV, Pillow | Image-based structure extraction | `[image]` |
 
@@ -147,7 +174,7 @@ No ChemDraw COM needed — structures are generated from SMILES via RDKit.
 
 ## Bundled Samples
 
-The `samples/` directory contains two real ELN exports (Buchwald coupling and SNAr alkylation) with full pipeline output:
+The `samples/` directory contains two real ELN exports (Buchwald, ortho-lithiation then alkylation) with full pipeline output:
 
 ```
 samples/
