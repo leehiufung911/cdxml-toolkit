@@ -864,8 +864,7 @@ def run_pipeline(
     merge_conditions: bool = True,
     approach: str = "chemdraw_mimic",
     chemscript_cleanup: bool = True,
-    align_mode: str = "rxnmapper",
-    classify_method: str = "rxnmapper",
+    align_mode: str = "rdkit",
     eln_csv: Optional[str] = None,
     ref_cdxml: Optional[str] = None,
     verbose: bool = False,
@@ -889,11 +888,11 @@ def run_pipeline(
         Kabsch alignment so the cleanup doesn't rotate the scheme.
     align_mode : str
         How to align reactant/reagent orientations to the product.
-        "rxnmapper" (default): ML transformer atom mapping via RXNMapper.
-            Understands reaction chemistry; falls back to MCS if unavailable.
-        "rdkit": RDKit MCS + GenerateDepictionMatching2DStructure.
+        "rdkit" (default): RDKit MCS + GenerateDepictionMatching2DStructure.
             Can rotate individual bonds, not just the whole molecule.
             Falls back to scheme_polisher's Kabsch if RDKit is unavailable.
+        "rxnmapper": ML transformer atom mapping via RXNMapper.
+            Understands reaction chemistry; falls back to MCS if unavailable.
         "kabsch": rigid-rotation Kabsch alignment via scheme_polisher
             (legacy mode — only rotates the entire fragment).
     eln_csv : str or None
@@ -995,14 +994,12 @@ def run_pipeline(
             "formatting, alignment deferred to Step 4e)...")
         from .scheme_polisher import polish_scheme, _compact_toward_arrow
 
-        use_rxnmapper = (classify_method == "rxnmapper")
         polished_path = os.path.join(tmpdir, "polished.cdxml")
         result = polish_scheme(
             normalized_path, polished_path,
             verbose=verbose,
             merge_conditions=merge_conditions,
             skip_alignment=True,
-            use_rxnmapper=use_rxnmapper,
         )
 
         n_replaced = len(result["replacements"])
@@ -1238,22 +1235,13 @@ def main(argv: Optional[List[str]] = None) -> int:
              "(default: cleanup is enabled to fix bond angles)",
     )
     parser.add_argument(
-        "--classify-method", choices=["rxnmapper", "heuristic"],
-        default="rxnmapper",
-        help="Reagent classification method (default: rxnmapper). "
-             "'rxnmapper' uses ML atom mapping to determine which "
-             "molecules contribute atoms to the product (falls back "
-             "to MCS if RXNMapper unavailable). "
-             "'heuristic' uses role_lookup + RDKit MCS only (legacy).",
-    )
-    parser.add_argument(
-        "--align-mode", choices=["rxnmapper", "rdkit", "kabsch"],
-        default="rxnmapper",
-        help="Orientation alignment method (default: rxnmapper). "
-             "'rxnmapper' uses ML transformer atom mapping to align "
-             "reactants to product orientation (falls back to MCS). "
+        "--align-mode", choices=["rdkit", "rxnmapper", "kabsch"],
+        default="rdkit",
+        help="Orientation alignment method (default: rdkit). "
              "'rdkit' uses MCS + GenerateDepictionMatching2DStructure "
              "(can rotate individual bonds for better alignment). "
+             "'rxnmapper' uses ML transformer atom mapping to align "
+             "reactants to product orientation (falls back to MCS). "
              "'kabsch' uses rigid-body rotation only (legacy backup).",
     )
     parser.add_argument(
@@ -1316,7 +1304,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             approach=args.approach,
             chemscript_cleanup=not args.no_chemscript_cleanup,
             align_mode=args.align_mode,
-            classify_method=args.classify_method,
             eln_csv=args.eln_csv,
             ref_cdxml=args.ref_cdxml,
             verbose=args.verbose,

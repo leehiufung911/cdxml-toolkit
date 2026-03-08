@@ -38,9 +38,10 @@ class ReagentInfo:
     smiles: Optional[str] = None
     position: str = ""             # "reactant", "above_arrow", "below_arrow"
     classification: str = ""       # "atom_contributing", "non_contributing", "unclassified"
-    classification_method: str = ""  # "role_lookup", "mcs", "rxnmapper", "fm_type", "metal_check", "inorganic_check"
+    classification_method: str = ""  # "schneider_fp", "role_lookup", "fm_type", etc.
     mcs_ratio: Optional[float] = None
-    rxnmapper_confidence: Optional[float] = None  # RXNMapper mapping confidence (0-1)
+    rxnmapper_confidence: Optional[float] = None  # deprecated — kept for compat
+    schneider_score: Optional[float] = None  # Schneider FP combo score
     role: Optional[str] = None     # "catalyst", "ligand", "base", "solvent", etc.
 
 
@@ -349,11 +350,15 @@ def _role_for_smiles_no_stereo(smiles: str, db) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Tier 2 — RDKit MCS
+# Tier 2 — RDKit MCS  (kept for alignment use; no longer used for classification)
 # ---------------------------------------------------------------------------
 
 def mcs_ratio(reagent_smiles: str, product_smiles: str) -> Optional[float]:
-    """Compute MCS heavy-atom ratio: MCS_atoms / reagent_heavy_atoms."""
+    """Compute MCS heavy-atom ratio: MCS_atoms / reagent_heavy_atoms.
+
+    NOTE: No longer used for classification (replaced by Schneider FP).
+    Kept because alignment.py may call it for 2D coordinate matching.
+    """
     try:
         from rdkit import Chem
         from rdkit.Chem import rdFMCS
@@ -387,6 +392,217 @@ def mcs_ratio(reagent_smiles: str, product_smiles: str) -> Optional[float]:
 
 
 # ---------------------------------------------------------------------------
+# Tier 1 — Schneider FP-based reaction role assignment
+# ---------------------------------------------------------------------------
+# Implements the algorithm from Schneider et al., JCIM 2016:
+# "What's What: The (Nearly) Definitive Guide to Reaction Role Assignment"
+#
+# Context-aware: considers the specific product to determine which candidates
+# are atom-contributing (reactants) vs non-contributing (reagents).
+
+# Common reagents mined from 1.3M USPTO patent reactions (appear in >1000
+# reactions across >100 reaction types).  Canonical SMILES.
+_SCHNEIDER_COMMON_REAGENTS: Optional[set] = None
+
+
+def _get_common_reagents() -> set:
+    """Lazily build the canonical common-reagent set."""
+    global _SCHNEIDER_COMMON_REAGENTS
+    if _SCHNEIDER_COMMON_REAGENTS is not None:
+        return _SCHNEIDER_COMMON_REAGENTS
+    try:
+        from rdkit import Chem
+    except ImportError:
+        _SCHNEIDER_COMMON_REAGENTS = set()
+        return _SCHNEIDER_COMMON_REAGENTS
+
+    raw = [
+        # Solvents
+        "ClCCl", "C(Cl)(Cl)Cl", "CS(C)=O", "CCOC(C)=O", "CC#N",
+        "C1CCOC1", "C1COCCO1", "CO", "CCO", "CC(C)=O",
+        "c1ccncc1", "CN(C)C=O", "c1ccccc1", "Cc1ccccc1", "CCOCC",
+        "CC(C)O", "ClC(Cl)Cl", "O", "CC(=O)O",
+        # Bases
+        "CCN(CC)CC", "CN(C)C",
+        # Common ions / salts
+        "[Na+]", "[K+]", "[Li+]", "[Cs+]",
+        "[OH-]", "[Cl-]", "[Br-]", "[I-]", "[F-]", "[H-]",
+        "[NH4+]", "O=C([O-])[O-]", "O=S([O-])([O-])=O",
+        # Catalyst metals
+        "[Pd]", "[Pt]", "[Ni]",
+    ]
+    result = set()
+    for smi in raw:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            result.add(Chem.MolToSmiles(mol))
+    _SCHNEIDER_COMMON_REAGENTS = result
+    return result
+
+
+def _is_schneider_common_reagent(mol) -> bool:
+    """Check if a molecule (or all its fragments) are common reagents."""
+    from rdkit import Chem
+    common = _get_common_reagents()
+    can_smi = Chem.MolToSmiles(mol)
+    if can_smi in common:
+        return True
+    frags = Chem.GetMolFrags(mol, asMols=True)
+    if len(frags) > 1:
+        return all(Chem.MolToSmiles(f) in common for f in frags)
+    return False
+
+
+def _schneider_fp(mol, scaffold: bool = False):
+    """Count-based Morgan FP (radius=1) as a dict."""
+    from rdkit.Chem import rdFingerprintGenerator as rfg
+    gen = rfg.GetMorganGenerator(
+        radius=1,
+        atomInvariantsGenerator=(
+            rfg.GetMorganAtomInvGen(includeRingMembership=False)
+            if scaffold else None
+        ),
+    )
+    return dict(gen.GetCountFingerprint(mol).GetNonzeroElements())
+
+
+def _schneider_sum_fps(fps):
+    """Sum multiple count fingerprints."""
+    from collections import Counter
+    r = Counter()
+    for fp in fps:
+        for k, v in fp.items():
+            r[k] += v
+    return dict(r)
+
+
+def _schneider_score(prod_fp: dict, react_fp: dict) -> float:
+    """Score a reactant combination against the product FP.
+
+    First term:  coverage (how well reactants explain the product)
+    Second term: leaving-group penalty (weighted less — sqrt)
+    """
+    keys = set(prod_fp) | set(react_fp)
+    total = sum(prod_fp.values())
+    if not keys or total == 0:
+        return 0.0
+    pos = sum(max(0, prod_fp.get(k, 0) - react_fp.get(k, 0)) for k in keys)
+    neg = sum(max(0, react_fp.get(k, 0) - prod_fp.get(k, 0)) for k in keys)
+    return max(0.0, (1.0 - pos / total) - 0.5 * (neg / total) ** 0.5)
+
+
+def _schneider_classify(reagents: List[ReagentInfo],
+                         product_smiles: str) -> None:
+    """Tier 1: Schneider FP-based reaction role assignment.
+
+    Classifies unclassified reagents as atom_contributing or non_contributing
+    by finding the combination of candidates whose Morgan fingerprints best
+    explain the product fingerprint.
+
+    Modifies reagents in place.
+    """
+    if not product_smiles:
+        return
+
+    try:
+        from rdkit import Chem
+    except ImportError:
+        return
+
+    import itertools
+
+    # Parse product(s) — may contain fragments separated by '.'
+    prod_mol = Chem.MolFromSmiles(product_smiles)
+    if prod_mol is None:
+        return
+
+    prod_fp_d = _schneider_fp(prod_mol, scaffold=False)
+    prod_fp_s = _schneider_fp(prod_mol, scaffold=True)
+    total_prod_atoms = prod_mol.GetNumHeavyAtoms()
+
+    if total_prod_atoms == 0:
+        return
+
+    # Collect unclassified reagents that have parseable SMILES
+    candidates = []
+    for r in reagents:
+        if r.classification:
+            continue
+        if not r.smiles:
+            continue
+        mol = Chem.MolFromSmiles(r.smiles)
+        if mol is None:
+            continue
+        candidates.append({
+            "reagent": r,
+            "mol": mol,
+            "fp_d": _schneider_fp(mol, scaffold=False),
+            "fp_s": _schneider_fp(mol, scaffold=True),
+            "n_atoms": mol.GetNumHeavyAtoms(),
+            "is_common": _is_schneider_common_reagent(mol),
+        })
+
+    if not candidates:
+        return
+
+    def _find_best(cand_list):
+        """Find the best-scoring reactant combination."""
+        best_score, best_combo = -1.0, None
+        n = len(cand_list)
+        if n == 0 or n > 18:
+            return best_combo, best_score
+        for r in range(1, min(n + 1, 6)):  # max 5 reactants
+            for combo in itertools.combinations(cand_list, r):
+                na = sum(c["n_atoms"] for c in combo)
+                if na < total_prod_atoms * 0.5 or na > total_prod_atoms * 6:
+                    continue
+                fp_d = _schneider_sum_fps([c["fp_d"] for c in combo])
+                fp_s = _schneider_sum_fps([c["fp_s"] for c in combo])
+                sc = (_schneider_score(prod_fp_d, fp_d) +
+                      _schneider_score(prod_fp_s, fp_s))
+                if sc > best_score:
+                    best_score, best_combo = sc, combo
+        return best_combo, best_score
+
+    # Phase 1: try without common reagents
+    non_common = [c for c in candidates if not c["is_common"]]
+    best_combo, best_score = _find_best(non_common)
+
+    # Phase 2: if no good result, include common reagents
+    if best_combo is None or best_score < 0.5:
+        combo2, score2 = _find_best(candidates)
+        if score2 > best_score:
+            best_combo, best_score = combo2, score2
+
+    # Apply results
+    reactant_set = set()
+    if best_combo:
+        reactant_set = {id(c["reagent"]) for c in best_combo}
+
+    for c in candidates:
+        r = c["reagent"]
+        if id(r) in reactant_set:
+            r.classification = "atom_contributing"
+        else:
+            r.classification = "non_contributing"
+        r.classification_method = "schneider_fp"
+        r.schneider_score = round(best_score, 4)
+
+    # Mark any remaining unclassified (no SMILES) as unclassified
+    for r in reagents:
+        if not r.classification:
+            r.classification = "unclassified"
+            r.classification_method = "none"
+
+    print(f"  Schneider FP classification (score={best_score:.3f}): "
+          f"{sum(1 for c in candidates if c['reagent'].classification == 'atom_contributing')} "
+          f"reactant(s), "
+          f"{sum(1 for c in candidates if c['reagent'].classification == 'non_contributing')} "
+          f"reagent(s)",
+          file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Main Classification Logic
 # ---------------------------------------------------------------------------
 
@@ -394,50 +610,29 @@ def classify_reagents(reagents: List[ReagentInfo],
                       product_smiles: str,
                       mcs_threshold: float = 0.3,
                       use_rxnmapper: bool = True) -> List[ReagentInfo]:
-    """Classify each reagent using the tiered strategy.
+    """Classify each reagent using a two-tier strategy.
 
-    Tiers (applied in order):
-      1.  Role lookup — reagent_db name/SMILES match, metal check, inorganic check
-      1.5 RXNMapper atom mapping (if use_rxnmapper=True and rxn-experiments env available)
-      2.  RDKit MCS ratio (fallback for anything still unclassified)
+    Tier 1: Schneider FP scoring — context-aware binary classification
+            (atom_contributing vs non_contributing).
+    Tier 2: Curated DB lookup — semantic role enrichment for non-contributing
+            species (adds labels like 'base', 'catalyst', 'solvent').
+
+    Schneider always wins on the binary question.  The DB never overrides it.
+
+    Args:
+        mcs_threshold: deprecated, ignored (kept for API compat)
+        use_rxnmapper: deprecated, ignored (kept for API compat)
     """
-    # --- Tier 1: role lookup (fast, no subprocess) ---
+    # --- Tier 1: Schneider FP-based classification (context-aware) ---
+    _schneider_classify(reagents, product_smiles)
+
+    # --- Tier 2: Semantic role enrichment for non-contributing species ---
     for r in reagents:
-        # Already classified (e.g. by FM type)?
-        if r.classification:
-            continue
-
-        result = role_lookup(r.smiles, r.name)
-        if result:
-            role, method = result
-            r.classification = "non_contributing"
-            r.classification_method = method
-            r.role = role
-
-    # --- Tier 1.5: RXNMapper atom mapping ---
-    # For reagents that escaped Tier 1, try ML-based classification.
-    # One RXNMapper call covers all unclassified reagents at once.
-    if use_rxnmapper:
-        _try_rxnmapper_classification(reagents, product_smiles)
-
-    # --- Tier 2: RDKit MCS (fallback for remaining unclassified) ---
-    for r in reagents:
-        if r.classification:
-            continue
-
-        if r.smiles and product_smiles:
-            ratio = mcs_ratio(r.smiles, product_smiles)
-            if ratio is not None:
-                r.mcs_ratio = round(ratio, 3)
-                r.classification_method = "mcs"
-                r.classification = ("atom_contributing"
-                                    if ratio > mcs_threshold
-                                    else "non_contributing")
-                continue
-
-        # Fallback
-        r.classification = "unclassified"
-        r.classification_method = "none"
+        if r.classification == "non_contributing" and not r.role:
+            result = role_lookup(r.smiles, r.name)
+            if result:
+                role, _method = result
+                r.role = role  # "base", "catalyst", "solvent", etc.
 
     return reagents
 
@@ -538,8 +733,12 @@ def _try_rxnmapper_classification(reagents: List[ReagentInfo],
 
 def classify_from_cdxml(cdxml_path: str,
                         mcs_threshold: float = 0.3,
-                        use_rxnmapper: bool = True) -> Dict[str, Any]:
-    """Parse a CDXML reaction file and classify all reagents."""
+                        use_rxnmapper: bool = False) -> Dict[str, Any]:
+    """Parse a CDXML reaction file and classify all reagents.
+
+    mcs_threshold and use_rxnmapper are deprecated and ignored (kept for
+    API compat).  Classification uses Schneider FP scoring internally.
+    """
     tree = ET.parse(cdxml_path)
     root = tree.getroot()
     page = _get_page(root)
@@ -599,16 +798,12 @@ def classify_from_cdxml(cdxml_path: str,
 
         ri = ReagentInfo(source_id=eid, position=position)
 
-        # FM type = 1 → solvent (immediate classification)
+        # FM type = 1 → solvent hint (Schneider may override)
         if fm_type == 1:
             ri.source_type = el.tag
-            ri.classification = "non_contributing"
-            ri.classification_method = "fm_type"
-            ri.role = "solvent"
+            ri.role = "solvent"  # hint only; Schneider decides classification
             if el.tag == "t":
                 ri.name = _get_text_content(el)
-            reagents.append(ri)
-            return
 
         # Fragment → extract SMILES via ChemScript
         if el.tag == "fragment":
@@ -685,6 +880,8 @@ def _reagent_to_dict(r: ReagentInfo) -> Dict[str, Any]:
         del d["mcs_ratio"]
     if d.get("rxnmapper_confidence") is None:
         d.pop("rxnmapper_confidence", None)
+    if d.get("schneider_score") is None:
+        d.pop("schneider_score", None)
     if d["role"] is None:
         del d["role"]
     if d["name"] is None:

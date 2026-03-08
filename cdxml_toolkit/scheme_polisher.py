@@ -414,7 +414,7 @@ def polish_scheme(
     verbose: bool = False,
     merge_conditions: bool = False,
     skip_alignment: bool = False,
-    use_rxnmapper: bool = True,
+    use_rxnmapper: bool = False,
 ) -> Dict:
     """Polish a CDXML reaction scheme in-place.
 
@@ -425,8 +425,8 @@ def polish_scheme(
     skipped.  Useful when the caller will run its own alignment
     afterwards (e.g. scheme_polisher_v2's RDKit MCS alignment).
 
-    If use_rxnmapper=True (default), reagent classification uses
-    RXNMapper atom mapping (Tier 1.5) before falling back to RDKit MCS.
+    use_rxnmapper is deprecated and ignored.  Classification now uses
+    Schneider FP scoring (context-aware, no ML dependency).
 
     Returns a dict describing changes made.
     """

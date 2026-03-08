@@ -2032,7 +2032,6 @@ def _alignment_cascade(schemes: List[ParsedScheme],
     try:
         from .alignment import (
             align_product_to_reference,
-            rxnmapper_align_to_product,
             rdkit_align_to_product,
         )
         has_alignment = True
@@ -2075,12 +2074,9 @@ def _alignment_cascade(schemes: List[ParsedScheme],
         # Align all structures within this step to the product
         log(f"  Step {step_idx+1}: aligning reactants/reagents to product")
         try:
-            rxnmapper_align_to_product(root, verbose=False)
-        except Exception:
-            try:
-                rdkit_align_to_product(root, verbose=False)
-            except Exception as e:
-                log(f"  WARNING: within-step alignment failed: {e}")
+            rdkit_align_to_product(root, verbose=False)
+        except Exception as e:
+            log(f"  WARNING: within-step alignment failed: {e}")
 
 
 def _write_temp_fragment_cdxml(frag: ET.Element,

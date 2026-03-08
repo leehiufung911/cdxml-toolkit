@@ -1102,7 +1102,8 @@ def _classify_species(species: List[SpeciesDescriptor],
                       ) -> Optional[float]:
     """Classify non-product species using the tiered pipeline.
 
-    Returns RXNMapper confidence (if used), or None.
+    Returns Schneider FP score (if classification ran), or None.
+    use_rxnmapper is deprecated and ignored (kept for API compat).
     """
     from .reactant_heuristic import (
         ReagentInfo, classify_reagents, role_lookup,
@@ -1119,7 +1120,7 @@ def _classify_species(species: List[SpeciesDescriptor],
         _log("  WARNING: No product SMILES found, cannot classify reagents")
         return None
 
-    # Build ReagentInfo list for the existing classification pipeline
+    # Build ReagentInfo list for the classification pipeline
     reagents = []
     sp_to_ri = {}  # map species index → ReagentInfo index
     for i, sp in enumerate(species):
@@ -1141,20 +1142,19 @@ def _classify_species(species: List[SpeciesDescriptor],
     if not reagents:
         return None
 
-    # Run the 3-tier classification
-    classify_reagents(reagents, product_smiles,
-                      use_rxnmapper=use_rxnmapper)
+    # Run 2-tier classification (Schneider FP → DB enrichment)
+    classify_reagents(reagents, product_smiles)
 
     # Apply results back to species
-    confidence = None
+    schneider_score = None
     for sp_i, ri_i in sp_to_ri.items():
         ri = reagents[ri_i]
         sp = species[sp_i]
         sp.role = ri.classification or "unclassified"
         sp.classification_method = ri.classification_method
         sp.role_detail = ri.role
-        if ri.rxnmapper_confidence is not None and confidence is None:
-            confidence = ri.rxnmapper_confidence
+        if ri.schneider_score is not None and schneider_score is None:
+            schneider_score = ri.schneider_score
 
     # --- Optional RXN Insight enrichment ---
     rxn_class = None
@@ -1162,7 +1162,7 @@ def _classify_species(species: List[SpeciesDescriptor],
     if use_rxn_insight:
         rxn_class, rxn_name = _try_rxn_insight(species, product_smiles)
 
-    return confidence
+    return schneider_score
 
 
 def _try_rxn_insight(species: List[SpeciesDescriptor],
@@ -1737,7 +1737,7 @@ def parse_reaction(
     rxn: Optional[str] = None,
     input_dir: Optional[str] = None,
     experiment: Optional[str] = None,
-    use_rxnmapper: bool = True,
+    use_rxnmapper: bool = False,
     use_rxn_insight: bool = True,
     use_network: bool = True,
     verbose: bool = False,
@@ -1754,7 +1754,7 @@ def parse_reaction(
         rxn: Path to RXN file
         input_dir: Directory to auto-discover files from
         experiment: Experiment name (with input_dir)
-        use_rxnmapper: Enable RXNMapper classification (Tier 1.5)
+        use_rxnmapper: Deprecated, ignored. Classification uses Schneider FP.
         use_rxn_insight: Enable RXN Insight enrichment
         use_network: Enable PubChem name resolution
         verbose: Print diagnostic messages to stderr
@@ -1969,7 +1969,7 @@ Examples:
                    help="Pretty-print JSON output")
     # Options
     p.add_argument("--no-rxnmapper", action="store_true",
-                   help="Skip RXNMapper classification")
+                   help="Deprecated (RXNMapper no longer used for classification)")
     p.add_argument("--no-rxn-insight", action="store_true",
                    help="Skip RXN Insight enrichment")
     p.add_argument("--no-network", action="store_true",
