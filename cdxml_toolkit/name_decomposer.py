@@ -259,6 +259,53 @@ def _get_yl_via_acid_probe(mol: Chem.Mol, attach_idx: int,
     return None
 
 
+_ACID_SMILES = "CCCCCCCCCCCCCCCCCCCC(=O)O"
+
+
+def _get_yl_via_selenyl_probe(mol: Chem.Mol, attach_idx: int,
+                               verbose: bool = False) -> Optional[str]:
+    """Get the -yl substituent form via a Se-linked icosanoic acid probe.
+
+    Builds: fragment—Se—CH₂(C₁₈)—COOH, names via ChemDraw, extracts
+    the substituent name from ``20-({sub}selanyl)icosanoic acid``.
+
+    The Se linker isolates the fragment from the acid chain, which avoids
+    the ambiguity that breaks the direct acid probe for carbonyl and
+    hydroxyl fragments (formyl, acetyl, Boc, phenylmethanol, etc.).
+    """
+    acid = Chem.MolFromSmiles(_ACID_SMILES)
+    if acid is None:
+        return None
+
+    combo = Chem.RWMol(Chem.CombineMols(mol, acid))
+    se_idx = combo.AddAtom(Chem.Atom(34))           # Se
+    combo.AddBond(attach_idx, se_idx, Chem.BondType.SINGLE)
+    acid_c_start = mol.GetNumAtoms()                 # C-20 of the acid
+    combo.AddBond(se_idx, acid_c_start, Chem.BondType.SINGLE)
+    try:
+        Chem.SanitizeMol(combo)
+    except Exception:
+        return None
+
+    probe_smi = Chem.MolToSmiles(combo.GetMol())
+    probe_name = _smiles_to_name(probe_smi)
+    if probe_name is None:
+        return None
+
+    if verbose:
+        print(f"    Se-probe: '{probe_name}'", file=sys.stderr)
+
+    # Extract from "20-({sub}selanyl)icosanoic acid"
+    m = re.match(r'20-\((.+?)selanyl\)icosanoic acid$', probe_name)
+    if m:
+        return m.group(1)
+    # Without outer parens: "20-{sub}selanylicosanoic acid"
+    m = re.match(r'20-(.+?)selanylicosanoic acid$', probe_name)
+    if m:
+        return m.group(1)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Public fragment-naming API
 # ---------------------------------------------------------------------------
@@ -1396,6 +1443,13 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
 
     # Construct -yl form candidates for the old parent
     yl_candidates = construct_yl_form(parent_name, parent_locant or "")
+
+    # Se-probe: often gives superior -yl forms (e.g. formyl, acetyl,
+    # hydroxy(phenyl)methyl) that construct_yl_form cannot derive.
+    se_yl = _get_yl_via_selenyl_probe(
+        frags.parent_mol, frags.parent_attach_idx, verbose=verbose)
+    if se_yl and se_yl not in yl_candidates:
+        yl_candidates.insert(0, se_yl)
 
     if verbose:
         print(f"    Sub fragment: {frags.sub_smi} → '{sub_parent_name}'",
