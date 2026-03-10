@@ -1256,6 +1256,70 @@ def generate_alternative_from_prefix(full_name: str, canonical_smiles: str,
 
 
 # ---------------------------------------------------------------------------
+# Helpers for recursive assembly
+# ---------------------------------------------------------------------------
+
+def _parent_name_from_bracket_yl(yl_text: str) -> Optional[str]:
+    """Derive a parent name from a bracket-group -yl text.
+
+    E.g., '2-morpholino-4-phenylquinolin-3-yl'
+        → strip '-3-yl' → '2-morpholino-4-phenylquinolin'
+        → add 'e'       → '2-morpholino-4-phenylquinoline'
+
+    Returns the parent name if it resolves via ChemDraw, else None.
+    """
+    m = re.search(r'-(\d+)-yl$', yl_text)
+    if not m:
+        return None
+    base = yl_text[:m.start()]
+    # Most IUPAC ring names drop a trailing 'e' to form -yl
+    # (quinoline → quinolin-yl, pyridine → pyridin-yl)
+    for suffix in ('e', ''):
+        candidate = base + suffix
+        if _name_to_smiles(candidate) is not None:
+            return candidate
+    return None
+
+
+def _insert_prefix_by_locant(name: str, locant: str,
+                              prefix_text: str) -> str:
+    """Insert '{locant}-{prefix_text}-' at the correct numerical position.
+
+    Scans top-level locants (skipping bracketed content) and inserts
+    before the first locant that is numerically greater than *locant*.
+
+    >>> _insert_prefix_by_locant('2-morpholino-4-phenylquinoline',
+    ...                          '3', '(phenylmethanol-yl)')
+    '2-morpholino-3-(phenylmethanol-yl)-4-phenylquinoline'
+    """
+    target = int(locant)
+    depth = 0
+    i = 0
+    while i < len(name):
+        c = name[i]
+        if c in '([':
+            depth += 1
+            i += 1
+        elif c in ')]':
+            depth -= 1
+            i += 1
+        elif c.isdigit() and depth == 0:
+            j = i
+            while j < len(name) and name[j].isdigit():
+                j += 1
+            if j < len(name) and name[j] == '-':
+                num = int(name[i:j])
+                if num > target:
+                    return (name[:i] + f"{locant}-{prefix_text}-"
+                            + name[i:])
+            i = j
+        else:
+            i += 1
+    # Fallback: prepend
+    return f"{locant}-{prefix_text}-" + name
+
+
+# ---------------------------------------------------------------------------
 # Alternative name generation
 # ---------------------------------------------------------------------------
 
@@ -1289,13 +1353,15 @@ def generate_alternative(full_name: str, canonical_smiles: str,
         return []
 
     return _assemble_alternatives(frags, canonical_smiles, verbose=verbose,
-                                   max_depth=max_depth, _deadline=_deadline)
+                                   max_depth=max_depth, _deadline=_deadline,
+                                   _bracket_yl_text=node.text)
 
 
 def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                            verbose: bool = False,
                            max_depth: int = 0,
                            _deadline: Optional[float] = None,
+                           _bracket_yl_text: str = "",
                            ) -> List[Alternative]:
     """Shared assembly logic for both bracket and prefix substituents.
 
@@ -1525,24 +1591,51 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                       f"(max_depth={max_depth})...", file=sys.stderr)
             sub_decomp = decompose_name(frags.sub_smi, max_depth=max_depth - 1,
                                         verbose=verbose, _deadline=_deadline)
+
+            # Collect recursive alt parent names (deduplicated)
+            recursive_parents = []
+            seen_parents = set()
+            sub_canon = _canonical(frags.sub_smi)
             for sub_alt in sub_decomp.alternatives:
-                if not sub_alt.valid:
-                    continue
-                # Skip if same as canonical sub name (already assembled above)
-                if sub_alt.name == sub_parent_name:
-                    continue
+                if sub_alt.valid and sub_alt.name not in seen_parents:
+                    if sub_alt.name != sub_parent_name:
+                        seen_parents.add(sub_alt.name)
+                        recursive_parents.append(sub_alt.name)
+
+            # Bracket-text shortcut: the bracket content may encode a
+            # flat-prefix parent name unreachable by recursive decomp
+            # (e.g. "2-morpholino-4-phenylquinolin-3-yl"
+            #  → "2-morpholino-4-phenylquinoline")
+            if _bracket_yl_text:
+                bt_parent = _parent_name_from_bracket_yl(_bracket_yl_text)
+                if bt_parent and bt_parent not in seen_parents:
+                    bt_smi = _name_to_smiles(bt_parent)
+                    if (bt_smi and sub_canon
+                            and _canonical(bt_smi) == sub_canon):
+                        if verbose:
+                            print(f"    Bracket-text parent: '{bt_parent}'",
+                                  file=sys.stderr)
+                        seen_parents.add(bt_parent)
+                        recursive_parents.append(bt_parent)
+
+            for alt_parent in recursive_parents:
                 if verbose:
-                    print(f"    Recursive alt: '{sub_alt.name}'",
+                    print(f"    Recursive alt: '{alt_parent}'",
                           file=sys.stderr)
-                # Assemble: old-parent -yl at the known locant on the alt
                 for yl_form in all_yl_forms:
                     for strat, assembled in [
                         ("recursive-parens",
-                         f"{new_parent_locant}-({yl_form})-{sub_alt.name}"),
+                         _insert_prefix_by_locant(
+                             alt_parent, new_parent_locant,
+                             f"({yl_form})")),
                         ("recursive-noparens",
-                         f"{new_parent_locant}-{yl_form}-{sub_alt.name}"),
+                         _insert_prefix_by_locant(
+                             alt_parent, new_parent_locant,
+                             yl_form)),
                         ("recursive-brackets",
-                         f"{new_parent_locant}-[{yl_form}]-{sub_alt.name}"),
+                         _insert_prefix_by_locant(
+                             alt_parent, new_parent_locant,
+                             f"[{yl_form}]")),
                     ]:
                         valid = _validate_name(assembled, canonical_smiles)
                         if verbose:
@@ -1552,7 +1645,7 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                                   file=sys.stderr)
                         alternatives.append(Alternative(
                             name=assembled,
-                            parent_name=sub_alt.name,
+                            parent_name=alt_parent,
                             sub_name=yl_form,
                             locant=new_parent_locant,
                             valid=valid,
