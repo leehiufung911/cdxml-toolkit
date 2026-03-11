@@ -152,7 +152,7 @@ cdxml_toolkit/
 ├── cdxml_utils.py              # CDXML geometry (bbox, IO, id map)
 ├── rdkit_utils.py              # CDXML fragment → RDKit Mol/SMILES/MW
 ├── text_formatting.py          # Chemical subscripts + italic prefixes
-├── reagent_db.py               # Two-tier reagent database (172 + 5,837 entries)
+├── reagent_db.py               # Two-tier reagent database (~176 + 5,837 entries)
 ├── superatom_table.py          # Abbreviation label → SMILES (~2,850 entries)
 ├── eln_csv_parser.py           # Findmolecule ELN CSV parser
 ├── alignment.py                # Structure alignment (Kabsch, MCS, RXNMapper)
@@ -182,7 +182,7 @@ cdxml_toolkit/
 ├── structure_from_image.py     # Image → structure CDXML (DECIMER)
 ├── scheme_aligner.py           # MCS-based orientation alignment
 ├── scheme_maker.py             # Experimental: JSON → scheme
-├── reagent_abbreviations.json  # Tier-1 reagent DB (172 curated entries)
+├── reagent_abbreviations.json  # Tier-1 reagent DB (~176 curated entries)
 ├── chemscanner_abbreviations.json  # Tier-2 ChemScanner DB (5,837 entries)
 ├── superatom_data.json         # Superatom abbreviation data
 └── dsl/                        # Scheme DSL subpackage
