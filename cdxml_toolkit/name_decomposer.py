@@ -1534,13 +1534,14 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
         if new_parent_locant:
             pattern = f"{new_parent_locant}-astato"
             if pattern in new_parent_at_name:
+                # Try noparens first; skip parens if noparens validates
                 for strat, assembled in [
-                    ("replace-hal-parens",
-                     new_parent_at_name.replace(
-                         pattern, f"{new_parent_locant}-({yl_form})")),
                     ("replace-hal-noparens",
                      new_parent_at_name.replace(
                          pattern, f"{new_parent_locant}-{yl_form}")),
+                    ("replace-hal-parens",
+                     new_parent_at_name.replace(
+                         pattern, f"{new_parent_locant}-({yl_form})")),
                 ]:
                     valid = _validate_name(assembled, canonical_smiles)
                     if verbose:
@@ -1555,11 +1556,14 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                         valid=valid,
                         strategy=strat,
                     ))
+                    if valid:
+                        break  # skip more-bracketed variants
                 continue
 
         if "astato" in new_parent_at_name.lower():
-            for strat, repl in [("replace-hal-parens", f"({yl_form})"),
-                                 ("replace-hal-noparens", yl_form)]:
+            # Try noparens first; skip parens if noparens validates
+            for strat, repl in [("replace-hal-noparens", yl_form),
+                                 ("replace-hal-parens", f"({yl_form})")]:
                 assembled = re.sub(
                     r'\d*-?astato', repl, new_parent_at_name,
                     flags=re.IGNORECASE
@@ -1577,6 +1581,8 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                     valid=valid,
                     strategy=strat,
                 ))
+                if valid:
+                    break  # skip more-bracketed variants
 
     # Fallback: if no valid alternatives from construct_yl_form, try acid probe
     has_valid = any(a.valid for a in alternatives)
@@ -1588,16 +1594,17 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
             if verbose:
                 print(f"    Acid probe -yl: '{acid_yl}'", file=sys.stderr)
             # Try assembly with acid-probe -yl form
+            # Try noparens first; skip parens if noparens validates
             if new_parent_locant:
                 pattern = f"{new_parent_locant}-astato"
                 if pattern in new_parent_at_name:
                     for strat, assembled in [
-                        ("acid-probe-parens",
-                         new_parent_at_name.replace(
-                             pattern, f"{new_parent_locant}-({acid_yl})")),
                         ("acid-probe-noparens",
                          new_parent_at_name.replace(
                              pattern, f"{new_parent_locant}-{acid_yl}")),
+                        ("acid-probe-parens",
+                         new_parent_at_name.replace(
+                             pattern, f"{new_parent_locant}-({acid_yl})")),
                     ]:
                         valid = _validate_name(assembled, canonical_smiles)
                         if verbose:
@@ -1612,9 +1619,11 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                             valid=valid,
                             strategy=strat,
                         ))
+                        if valid:
+                            break  # skip more-bracketed variants
             elif "astato" in new_parent_at_name.lower():
-                for strat, repl in [("acid-probe-parens", f"({acid_yl})"),
-                                     ("acid-probe-noparens", acid_yl)]:
+                for strat, repl in [("acid-probe-noparens", acid_yl),
+                                     ("acid-probe-parens", f"({acid_yl})")]:
                     assembled = re.sub(
                         r'\d*-?astato', repl, new_parent_at_name,
                         flags=re.IGNORECASE
@@ -1632,6 +1641,8 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                         valid=valid,
                         strategy=strat,
                     ))
+                    if valid:
+                        break  # skip more-bracketed variants
 
     # Recursive decomposition: try alternative parent names for sub-fragment
     if max_depth > 0 and new_parent_locant:
@@ -1677,15 +1688,16 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                     print(f"    Recursive alt: '{alt_parent}'",
                           file=sys.stderr)
                 for yl_form in all_yl_forms:
+                    # Try noparens first; skip more-bracketed if valid
                     for strat, assembled in [
-                        ("recursive-parens",
-                         _insert_prefix_by_locant(
-                             alt_parent, new_parent_locant,
-                             f"({yl_form})")),
                         ("recursive-noparens",
                          _insert_prefix_by_locant(
                              alt_parent, new_parent_locant,
                              yl_form)),
+                        ("recursive-parens",
+                         _insert_prefix_by_locant(
+                             alt_parent, new_parent_locant,
+                             f"({yl_form})")),
                         ("recursive-brackets",
                          _insert_prefix_by_locant(
                              alt_parent, new_parent_locant,
@@ -1705,6 +1717,8 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                             valid=valid,
                             strategy=strat,
                         ))
+                        if valid:
+                            break  # skip more-bracketed variants
 
     return alternatives
 
@@ -1718,6 +1732,138 @@ def _validate_name(name: str, expected_canonical: str) -> bool:
     if canon is None:
         return False
     return canon == expected_canonical
+
+
+def _deduplicate_alternatives(alternatives: List[Alternative],
+                               verbose: bool = False) -> List[Alternative]:
+    """Remove redundant alternatives: bracket-only variants and
+    single-position synonym variants.
+
+    **Step 1 — bracket-stripped dedup.**  Group validated names by their
+    bracket-stripped form (all ``()``, ``[]`` removed).  Within each group
+    keep only the name with the fewest bracket characters (ties broken by
+    shortest total length).
+
+    **Step 2 — single-segment synonym collapse.**  For any two surviving
+    names that differ at exactly one contiguous segment where one segment
+    has outer brackets and the other does not, discard the bracketed
+    variant.  Since both names round-trip to the same canonical SMILES,
+    the segments must be synonymous (e.g. ``morpholino`` vs
+    ``(morpholin-4-yl)``).
+    """
+    valid = [a for a in alternatives if a.valid]
+    invalid = [a for a in alternatives if not a.valid]
+
+    if len(valid) <= 1:
+        return alternatives
+
+    # --- Step 1: bracket-stripped dedup ---
+    def _strip_brackets(name: str) -> str:
+        return name.replace('(', '').replace(')', '').replace('[', '').replace(']', '')
+
+    def _bracket_count(name: str) -> int:
+        return sum(1 for c in name if c in '()[]')
+
+    groups: dict = {}
+    for alt in valid:
+        key = _strip_brackets(alt.name)
+        groups.setdefault(key, []).append(alt)
+
+    step1: List[Alternative] = []
+    for group in groups.values():
+        best = min(group, key=lambda a: (_bracket_count(a.name), len(a.name)))
+        step1.append(best)
+        if verbose and len(group) > 1:
+            removed = [a.name for a in group if a is not best]
+            print(f"  Dedup (bracket-strip): kept '{best.name}', "
+                  f"removed {removed}", file=sys.stderr)
+
+    # --- Step 2: single-segment synonym collapse ---
+    # Sort shortest-first so shorter names are preferred as "keepers".
+    step1.sort(key=lambda a: (len(a.name), a.name))
+
+    to_remove: set = set()
+    for i in range(len(step1)):
+        if i in to_remove:
+            continue
+        for j in range(i + 1, len(step1)):
+            if j in to_remove:
+                continue
+            name_i = step1[i].name
+            name_j = step1[j].name
+
+            # Find longest common prefix
+            pfx = 0
+            for k in range(min(len(name_i), len(name_j))):
+                if name_i[k] == name_j[k]:
+                    pfx = k + 1
+                else:
+                    break
+
+            # Find longest common suffix (not overlapping with prefix)
+            sfx = 0
+            max_sfx = min(len(name_i), len(name_j)) - pfx
+            for k in range(1, max_sfx + 1):
+                if name_i[-k] == name_j[-k]:
+                    sfx = k
+                else:
+                    break
+
+            end_i = len(name_i) - sfx if sfx else len(name_i)
+            end_j = len(name_j) - sfx if sfx else len(name_j)
+            mid_i = name_i[pfx:end_i]
+            mid_j = name_j[pfx:end_j]
+
+            if not mid_i or not mid_j:
+                continue
+
+            # Check: does exactly one segment have outer brackets?
+            def _has_outer_brackets(s: str) -> bool:
+                return (len(s) >= 2
+                        and ((s[0] == '(' and s[-1] == ')')
+                             or (s[0] == '[' and s[-1] == ']')))
+
+            i_outer = _has_outer_brackets(mid_i)
+            j_outer = _has_outer_brackets(mid_j)
+
+            if i_outer != j_outer:
+                # One has outer brackets, one doesn't.
+                # Only collapse if the inner text shares a common stem
+                # (≥ 4 chars) with the non-bracketed form — this avoids
+                # collapsing genuinely different yl-forms (e.g.
+                # "hydroxy(phenyl)methyl" vs "phenylmethanol-yl").
+                if i_outer:
+                    inner = mid_i[1:-1]
+                    other = mid_j
+                else:
+                    inner = mid_j[1:-1]
+                    other = mid_i
+
+                common_prefix_len = 0
+                for k in range(min(len(inner), len(other))):
+                    if inner[k] == other[k]:
+                        common_prefix_len = k + 1
+                    else:
+                        break
+
+                if common_prefix_len >= 4:
+                    if i_outer:
+                        to_remove.add(i)
+                        if verbose:
+                            print(f"  Dedup (synonym): removed '{name_i}' "
+                                  f"(kept shorter '{name_j}')",
+                                  file=sys.stderr)
+                        break  # i is removed, skip remaining j
+                    else:
+                        to_remove.add(j)
+                        if verbose:
+                            print(f"  Dedup (synonym): removed '{name_j}' "
+                                  f"(kept shorter '{name_i}')",
+                                  file=sys.stderr)
+
+    step2 = [alt for idx, alt in enumerate(step1) if idx not in to_remove]
+
+    return step2 + invalid
 
 
 # ---------------------------------------------------------------------------
@@ -1861,14 +2007,16 @@ def decompose_name(smiles: str, max_depth: int = 1,
                     )
                     result.alternatives.extend(alts)
 
-    # Deduplicate alternatives by name
-    seen = set()
-    unique = []
+    # Deduplicate alternatives:
+    # 1. Remove exact-name duplicates
+    seen: set = set()
+    unique: list = []
     for alt in result.alternatives:
         if alt.name not in seen:
             seen.add(alt.name)
             unique.append(alt)
-    result.alternatives = unique
+    # 2. Remove bracket-only variants and single-position synonyms
+    result.alternatives = _deduplicate_alternatives(unique, verbose=verbose)
 
     # Infer canonical parent: for the canonical name, the parent is the
     # fragment that remains when the first substituent is removed.
