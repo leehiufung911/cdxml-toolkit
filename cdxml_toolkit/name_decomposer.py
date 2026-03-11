@@ -1862,7 +1862,11 @@ def _validate_name(name: str, expected_canonical: str) -> bool:
 # (suffix, prefix_form, terminal_e_elided_before_suffix)
 # Longest suffix first to avoid partial matches.
 _SUFFIX_PREFIX_MAP = [
+    # Longest suffix first to avoid partial matches.
     ("carboxylic acid", "carboxy", False),
+    ("sulfonic acid", "sulfo", False),
+    ("sulfonamide", "sulfamoyl", False),
+    ("carbonitrile", "cyano", False),
     ("carbaldehyde", "formyl", False),
     ("carboxamide", "carbamoyl", False),
     ("amine", "amino", True),
@@ -2062,6 +2066,126 @@ def _deduplicate_alternatives(alternatives: List[Alternative],
 
 
 # ---------------------------------------------------------------------------
+# Space-separated yl-group alternatives
+# ---------------------------------------------------------------------------
+
+# Ring stems that appear in "ring-N-yl" patterns (e.g. pyridin-4-yl)
+_YL_RING_STEMS = [
+    "quinolin", "isoquinolin", "quinoxalin", "quinazolin",
+    "pyridin", "pyrimidin", "pyrazin", "pyridazin",
+    "morpholin", "piperidin", "piperazin", "pyrrolidin",
+    "indol", "benzimidazol", "benzothiazol", "benzofuran", "benzoxazol",
+    "naphthal", "acridin", "carbazol", "phenanthrol",
+    "thien", "furan", "pyrrol", "imidazol", "oxazol", "thiazol",
+    "triazin", "tetrazol", "triazol", "oxadiazol",
+    "phenyl",  # for phenylbenzoate etc.
+]
+
+
+def _space_sep_yl_alternatives(
+    canonical_name: str,
+    canonical_smiles: str,
+    verbose: bool = False,
+    max_depth: int = 0,
+    _deadline: Optional[float] = None,
+) -> List[Alternative]:
+    """Generate alternatives for space-separated names with embedded yl-groups.
+
+    Handles names like "tert-butyl pyridin-4-ylcarbamate" where a ring-yl
+    pattern is fused into the name without brackets.  Creates a synthetic
+    BracketNode and delegates to the standard generate_alternative() path.
+
+    Produces alternatives like "4-((tert-butoxycarbonyl)amino)pyridine"
+    where the ring becomes the parent.
+    """
+    if ' ' not in canonical_name:
+        return []
+
+    alternatives: List[Alternative] = []
+
+    # Build regex matching ring-N-yl patterns
+    stem_pattern = '|'.join(re.escape(s) for s in
+                            sorted(_YL_RING_STEMS, key=len, reverse=True))
+    # Match ring stem + optional fused annotation + locant + yl
+    # E.g.: pyridin-4-yl, quinolin-7-yl, thieno[2,3-d]pyrimidin-4-yl
+    yl_re = re.compile(
+        r'((?:' + stem_pattern + r')'
+        r'(?:\[[^\]]+\])?'      # optional fused ring annotation [2,3-d]
+        r'(?:[a-z]*)'           # optional stem continuation (e.g. "oline" in morpholine)
+        r'(?:-\d+(?:,\d+)*)?'  # optional locant(s)
+        r'-yl)',
+        re.IGNORECASE,
+    )
+
+    for m in yl_re.finditer(canonical_name):
+        yl_text = m.group(1)   # e.g. "pyridin-4-yl"
+        yl_start = m.start()
+        yl_end = m.end() - 1   # inclusive
+
+        # The yl-group should appear after a space (space-separated name)
+        # and be followed by more text (the functional group suffix)
+        if yl_start == 0:
+            continue
+        # Check there's a space somewhere before this yl-group
+        before_text = canonical_name[:yl_start]
+        if ' ' not in before_text:
+            continue
+        # Check there's a suffix after the yl-group (not end-of-name)
+        after_text = canonical_name[yl_end + 1:]
+        if not after_text or after_text.startswith(' '):
+            continue  # yl at end of name or before space — not embedded
+
+        if verbose:
+            print(f"  Space-sep yl: '{yl_text}' in '{canonical_name}'",
+                  file=sys.stderr)
+            print(f"    before='{before_text}' after='{after_text}'",
+                  file=sys.stderr)
+
+        # Create synthetic BracketNode
+        # The At-probe: replace yl-text with "astato"
+        node = BracketNode(
+            text=yl_text,
+            start=yl_start,
+            end=yl_end,
+            depth=0,
+            kind="candidate",
+        )
+
+        # Try At-probe (replace yl-text with "astato")
+        at_name = canonical_name[:yl_start] + "astato" + canonical_name[yl_end + 1:]
+        if verbose:
+            print(f"    At-probe name: '{at_name}'", file=sys.stderr)
+
+        at_smi = _name_to_smiles(at_name)
+        if at_smi is None:
+            if verbose:
+                print(f"    At-probe failed", file=sys.stderr)
+            continue
+
+        # Extract fragments
+        frags = _get_fragments_via_at_probe(canonical_smiles, at_smi,
+                                             verbose=verbose)
+        if frags is None:
+            if verbose:
+                print(f"    Fragment extraction failed", file=sys.stderr)
+            continue
+
+        # Assemble alternatives
+        alts = _assemble_alternatives(
+            frags, canonical_smiles, verbose=verbose,
+            max_depth=max_depth, _deadline=_deadline,
+            _bracket_yl_text=yl_text,
+        )
+        alternatives.extend(alts)
+
+        if verbose:
+            print(f"    Generated {len(alts)} alternatives from space-sep yl",
+                  file=sys.stderr)
+
+    return alternatives
+
+
+# ---------------------------------------------------------------------------
 # Main decomposition
 # ---------------------------------------------------------------------------
 
@@ -2209,6 +2333,15 @@ def decompose_name(smiles: str, max_depth: int = -1,
     suffix_alts = _suffix_to_prefix_alternatives(
         canonical_name, canon_smi, verbose=verbose)
     result.alternatives.extend(suffix_alts)
+
+    # Space-separated names with embedded yl-groups
+    # (e.g. "tert-butyl pyridin-4-ylcarbamate" — no brackets, no prefix match)
+    if ' ' in canonical_name:
+        yl_alts = _space_sep_yl_alternatives(
+            canonical_name, canon_smi, verbose=verbose,
+            max_depth=max_depth, _deadline=_deadline,
+        )
+        result.alternatives.extend(yl_alts)
 
     # Deduplicate alternatives:
     # 1. Remove exact-name duplicates and names identical to canonical
