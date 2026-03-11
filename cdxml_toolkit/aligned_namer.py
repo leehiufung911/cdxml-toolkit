@@ -136,6 +136,7 @@ _SUBSTITUENT_PREFIXES = sorted([
     "amino", "bromo", "chloro", "fluoro", "iodo", "nitro",
     "methyl", "ethyl", "propyl", "butyl", "phenyl", "benzyl",
     "methoxy", "ethoxy", "hydroxy", "oxo", "formyl",
+    "methoxycarbonyl", "ethoxycarbonyl", "carbamoyl", "carboxy", "cyano",
     "morpholino", "morpholin", "piperidin", "pyrrolidin", "piperazin",
     "benzamido", "acetamido", "acetyl",
     "tert", "sec", "iso", "cyclo",
@@ -485,6 +486,19 @@ _COMMON_ALKYL_ESTERS = {
     "neopentyl", "cyclopentyl", "cyclohexyl",
 }
 
+# Alkyl → alkoxy mapping for ester suffix→prefix conversion.
+# "methyl X-carboxylate" → "(methoxycarbonyl)X"
+_ALKYL_TO_ALKOXY = {
+    "methyl": "methoxy", "ethyl": "ethoxy", "propyl": "propoxy",
+    "isopropyl": "isopropoxy", "butyl": "butoxy",
+    "tert-butyl": "tert-butoxy", "isobutyl": "isobutoxy",
+    "sec-butyl": "sec-butoxy", "benzyl": "benzyloxy",
+    "allyl": "allyloxy", "phenyl": "phenoxy", "vinyl": "vinyloxy",
+    "neopentyl": "neopentyloxy", "cyclopentyl": "cyclopentyloxy",
+    "cyclohexyl": "cyclohexyloxy",
+}
+_ALKOXY_TO_ALKYL = {v: k for k, v in _ALKYL_TO_ALKOXY.items()}
+
 
 def _ester_variants(name: str, parent: str) -> List[Tuple[str, str]]:
     """Generate ester naming alternatives.
@@ -710,6 +724,238 @@ def _general_suffix_prefix_variants(name: str, parent: str) -> List[Tuple[str, s
     return variants
 
 
+# ---------------------------------------------------------------------------
+# Extended suffix→prefix for principal characteristic groups
+# ---------------------------------------------------------------------------
+# Suffixes that extend beyond the parent ring stem (carboxylate,
+# carbaldehyde, carboxamide, carbonitrile, carboxylic acid).
+# These follow the same ring_stem-LOCANT-SUFFIX pattern as the simple
+# suffixes handled by _general_suffix_prefix_variants, but the suffix
+# words themselves are longer and sometimes require an alkyl ester prefix.
+
+# (suffix, prefix_or_None, needs_alkyl_prefix, wrap_in_parens)
+# When needs_alkyl_prefix is True, the prefix is built from the
+# space-separated first word of the name (e.g. "methyl" → "methoxycarbonyl").
+_EXTENDED_SUFFIX_TABLE: List[Tuple[str, Optional[str], bool, bool]] = [
+    ("carboxylic acid", "carboxy",   False, False),
+    ("carboxamide",     "carbamoyl", False, True),
+    ("carbaldehyde",    "formyl",    False, False),
+    ("carbonitrile",    "cyano",     False, False),
+    ("carboxylate",     None,        True,  True),   # prefix from alkyl
+]
+
+
+def _extended_suffix_prefix_variants(
+    name: str, parent: str,
+) -> List[Tuple[str, str]]:
+    """Generate suffix→prefix variants for principal characteristic groups.
+
+    Handles suffixes that extend beyond the parent ring stem:
+      "methyl 2-(methylthio)thieno[2,3-d]pyrimidine-4-carboxylate"
+        → "2-(methylthio)-4-(methoxycarbonyl)thieno[2,3-d]pyrimidine"
+      "2-(methylthio)thieno[2,3-d]pyrimidine-4-carbaldehyde"
+        → "2-(methylthio)-4-formylthieno[2,3-d]pyrimidine"
+
+    Algorithm mirrors _general_suffix_prefix_variants: find the suffix at
+    the end of the name, locate the ring stem before it, and reconstruct
+    with the prefix form prepended.
+    """
+    variants: List[Tuple[str, str]] = []
+
+    for suffix, prefix, needs_alkyl, wrap in _EXTENDED_SUFFIX_TABLE:
+        # Work on a potentially trimmed name (alkyl stripped for esters)
+        work_name = name
+        alkyl = None
+
+        if needs_alkyl:
+            parts = name.split(None, 1)
+            if len(parts) != 2:
+                continue
+            if parts[0].lower() not in _ALKYL_TO_ALKOXY:
+                continue
+            alkyl = parts[0]
+            work_name = parts[1]
+
+        work_lower = work_name.lower()
+
+        # Match "-LOCANT-SUFFIX" (or " SUFFIX" for multi-word) at the end
+        if " " in suffix:
+            # Multi-word suffix like "carboxylic acid"
+            pattern = r'-(\d+(?:,\d+)*)-' + re.escape(suffix) + r'$'
+        else:
+            pattern = r'-(\d+(?:,\d+)*)-' + re.escape(suffix) + r'$'
+
+        m = re.search(pattern, work_lower)
+        if not m:
+            continue
+
+        locants = m.group(1)
+        before = work_name[:m.start()]    # everything before "-LOCANT-SUFFIX"
+
+        # Find longest known ring stem at the end of 'before'
+        before_lower = before.lower()
+        best_stem = None
+        best_ring = None
+        for stem, ring in _KNOWN_RING_STEMS.items():
+            if before_lower.endswith(stem):
+                if best_stem is None or len(stem) > len(best_stem):
+                    best_stem = stem
+                    best_ring = ring
+
+        if best_stem is None:
+            continue
+
+        leading = before[:len(before) - len(best_stem)]
+
+        # Build the prefix
+        if needs_alkyl and alkyl is not None:
+            alkoxy = _ALKYL_TO_ALKOXY[alkyl.lower()]
+            prefix = f"{alkoxy}carbonyl"
+            wrap = True
+
+        if prefix is None:
+            continue
+
+        pref = f"({prefix})" if wrap else prefix
+
+        # Reconstruct: LOCANT-PREFIX-LEADING-RING
+        if leading:
+            variant = locants + "-" + pref + "-" + leading + best_ring
+        else:
+            variant = locants + "-" + pref + best_ring
+        variant = re.sub(r'-{2,}', '-', variant)
+        variant = variant.strip('-')
+
+        new_parent = best_ring
+        variants.append((variant, new_parent))
+
+    return variants
+
+
+def _extended_prefix_to_suffix_variants(
+    name: str, parent: str,
+) -> List[Tuple[str, str]]:
+    """Generate prefix→suffix variants for principal characteristic groups.
+
+    Reverse of _extended_suffix_prefix_variants:
+      "2-(methylthio)-4-(methoxycarbonyl)thieno[2,3-d]pyrimidine"
+        → "methyl 2-(methylthio)thieno[2,3-d]pyrimidine-4-carboxylate"
+      "4-formyl-2-(methylthio)thieno[2,3-d]pyrimidine"
+        → "2-(methylthio)thieno[2,3-d]pyrimidine-4-carbaldehyde"
+
+    Detects known prefix patterns in the name's substituent chain and
+    converts them to suffix form appended after the ring stem.
+    """
+    variants: List[Tuple[str, str]] = []
+    name_lower = name.lower()
+
+    # Table: (prefix_to_detect, suffix, produces_alkyl)
+    # For alkoxycarbonyl, we iterate over _ALKOXY_TO_ALKYL entries.
+    simple_prefix_map = [
+        ("carboxy",   "carboxylic acid", False),
+        ("carbamoyl", "carboxamide",     False),
+        ("formyl",    "carbaldehyde",    False),
+        ("cyano",     "carbonitrile",    False),
+    ]
+
+    # --- Simple prefixes (no alkyl) ---
+    for prefix, suffix, _ in simple_prefix_map:
+        # Match "LOCANT-PREFIX" or "LOCANT-(PREFIX)" in the name
+        # Try with parentheses first
+        for pfx_pat in [re.escape(f"({prefix})"), re.escape(prefix)]:
+            pat = r'(\d+(?:,\d+)*)-' + pfx_pat + r'[-]?'
+            m_pref = re.search(pat, name_lower)
+            if m_pref:
+                break
+        else:
+            continue
+
+        locants = m_pref.group(1)
+
+        # Remove the matched prefix group from the name
+        before_match = name[:m_pref.start()]
+        after_match = name[m_pref.end():]
+        core = before_match + after_match
+        core = re.sub(r'-{2,}', '-', core)
+        core = core.strip('-')
+
+        # Find ring stem in core to build suffix form
+        core_lower = core.lower()
+        best_stem = None
+        best_ring = None
+        for stem, ring in _KNOWN_RING_STEMS.items():
+            if stem in core_lower:
+                if best_stem is None or len(stem) > len(best_stem):
+                    best_stem = stem
+                    best_ring = ring
+
+        if best_stem is None:
+            continue
+
+        # Find where the stem ends in core, insert "-LOCANT-SUFFIX" there
+        stem_idx = core_lower.rfind(best_stem)
+        stem_end = stem_idx + len(best_stem)
+
+        # Include trailing 'e' if present (elided stem → full ring)
+        if (stem_end < len(core) and core[stem_end].lower() == 'e'
+                and best_ring.endswith('e') and not best_stem.endswith('e')):
+            stem_end += 1
+
+        variant = core[:stem_end] + "-" + locants + "-" + suffix + core[stem_end:]
+        variant = re.sub(r'-{2,}', '-', variant)
+        variant = variant.strip('-')
+        variants.append((variant, parent))
+
+    # --- Ester prefixes: (alkoxycarbonyl) → alkyl ... carboxylate ---
+    for alkoxy, alkyl in _ALKOXY_TO_ALKYL.items():
+        target = f"({alkoxy}carbonyl)"
+        target_lower = target.lower()
+        idx = name_lower.find(target_lower)
+        if idx < 0:
+            continue
+
+        # Find locant before the prefix
+        before_target = name[:idx]
+        m_loc = re.search(r'(\d+(?:,\d+)*)-$', before_target)
+        if not m_loc:
+            continue
+
+        locants = m_loc.group(1)
+
+        # Remove the matched "LOCANT-(alkoxycarbonyl)" from the name
+        before_loc = name[:m_loc.start()].rstrip('-')
+        after_target = name[idx + len(target):].lstrip('-')
+        core = before_loc + after_target
+        core = re.sub(r'-{2,}', '-', core)
+        core = core.strip('-')
+
+        # Find ring stem to append suffix
+        core_lower = core.lower()
+        best_stem = None
+        best_ring = None
+        for stem, ring in _KNOWN_RING_STEMS.items():
+            if stem in core_lower:
+                if best_stem is None or len(stem) > len(best_stem):
+                    best_stem = stem
+                    best_ring = ring
+
+        if best_stem is None:
+            continue
+
+        stem_idx = core_lower.rfind(best_stem)
+        stem_end = stem_idx + len(best_stem)
+        if (stem_end < len(core) and core[stem_end].lower() == 'e'
+                and best_ring.endswith('e') and not best_stem.endswith('e')):
+            stem_end += 1
+
+        suffix_part = core[:stem_end] + "-" + locants + "-carboxylate" + core[stem_end:]
+        variant = alkyl + " " + suffix_part
+        variant = re.sub(r'-{2,}', '-', variant)
+        variants.append((variant, parent))
+
+    return variants
+
+
 def _find_locant_group_starts(text: str) -> List[int]:
     """Find starting positions of top-level locant-prefix groups in *text*.
 
@@ -918,6 +1164,8 @@ def _generate_alignment_variants(
     if reordered and reordered != name:
         variants.append((reordered, parent))
     variants.extend(_ester_variants(name, parent))
+    variants.extend(_extended_suffix_prefix_variants(name, parent))
+    variants.extend(_extended_prefix_to_suffix_variants(name, parent))
     variants.extend(_retained_systematic_variants(name, parent))
     variants.extend(_retained_to_substitutive_variants(name, parent))
     variants.extend(_indicated_h_variants(name, parent))
@@ -985,6 +1233,18 @@ def _contextual_variants(
         # Try to generate suffix form from our prefix form
         # This is the reverse of _general_suffix_prefix_variants
         variants.extend(_prefix_to_suffix_variants(name, parent))
+
+    # 5. Extended principal characteristic group suffix/prefix matching.
+    #    If neighbor uses prefix-style naming for extended groups (formyl,
+    #    carboxy, carbamoyl, cyano, alkoxycarbonyl), try our suffix→prefix;
+    #    and vice versa.
+    ext_prefix_tokens = {"formyl", "carboxy", "carbamoyl", "cyano", "carbonyl"}
+    ext_suffix_tokens = {"carboxylate", "carbaldehyde", "carboxamide",
+                         "carbonitrile", "carboxylic"}
+    if n_tokens & ext_prefix_tokens and our_tokens & ext_suffix_tokens:
+        variants.extend(_extended_suffix_prefix_variants(name, parent))
+    if n_tokens & ext_suffix_tokens and our_tokens & ext_prefix_tokens:
+        variants.extend(_extended_prefix_to_suffix_variants(name, parent))
 
     return variants
 
