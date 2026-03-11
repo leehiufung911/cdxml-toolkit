@@ -1362,8 +1362,53 @@ def _insert_prefix_by_locant(name: str, locant: str,
             i = j
         else:
             i += 1
-    # Fallback: prepend.  No trailing hyphen when *name* starts with a
-    # letter (the parent stem), e.g. "2-bromo" + "quinoline" → "2-bromoquinoline".
+    # Fallback: no locant greater than target was found.  The new prefix
+    # should go AFTER all existing locant-prefix groups (before the parent
+    # stem), not at the very start.
+    #
+    # If the last prefix is bracketed, we can find its closing bracket and
+    # insert right after it.  For unbracketed prefixes we fall back to
+    # prepending (may give non-ascending locant order, but ChemDraw's
+    # resolver is lenient).
+    #
+    # Find the last locant-dash at depth 0:
+    last_ld_end = None  # position right after the last locant's '-'
+    d2 = 0
+    k = 0
+    while k < len(name):
+        ch = name[k]
+        if ch in '([':
+            d2 += 1; k += 1
+        elif ch in ')]':
+            d2 -= 1; k += 1
+        elif ch.isdigit() and d2 == 0:
+            kj = k
+            while kj < len(name) and name[kj].isdigit():
+                kj += 1
+            if kj < len(name) and name[kj] == '-':
+                last_ld_end = kj + 1
+            k = kj
+        else:
+            k += 1
+
+    if last_ld_end is not None and last_ld_end < len(name) and name[last_ld_end] == '(':
+        # Last prefix is bracketed — find the matching ')'.
+        bd = 1
+        bp = last_ld_end + 1
+        while bp < len(name) and bd > 0:
+            if name[bp] in '([':
+                bd += 1
+            elif name[bp] in ')]':
+                bd -= 1
+            bp += 1
+        # bp is right after the closing bracket.
+        # Insert: {existing}-{locant}-{prefix}{rest}
+        rest = name[bp:]
+        sep = "" if not rest or not rest[0].isdigit() else "-"
+        return name[:bp] + f"-{locant}-{prefix_text}{sep}" + rest
+
+    # Ultimate fallback: prepend.  No trailing hyphen when *name* starts
+    # with a letter (the parent stem).
     sep = "-" if name and name[0].isdigit() else ""
     return f"{locant}-{prefix_text}{sep}" + name
 
@@ -1534,33 +1579,42 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
 
     for yl_form in all_yl_forms:
         if new_parent_locant:
-            pattern = f"{new_parent_locant}-astato"
-            if pattern in new_parent_at_name:
-                # Try noparens first; skip parens if noparens validates
-                for strat, assembled in [
-                    ("replace-hal-noparens",
-                     new_parent_at_name.replace(
-                         pattern, f"{new_parent_locant}-{yl_form}")),
-                    ("replace-hal-parens",
-                     new_parent_at_name.replace(
-                         pattern, f"{new_parent_locant}-({yl_form})")),
-                ]:
-                    valid = _validate_name(assembled, canonical_smiles)
-                    if verbose:
-                        tag = "VALID" if valid else "INVALID"
-                        print(f"    Assembled ({strat}): '{assembled}' [{tag}]",
-                              file=sys.stderr)
-                    alternatives.append(Alternative(
-                        name=assembled,
-                        parent_name=sub_parent_name,
-                        sub_name=yl_form,
-                        locant=new_parent_locant or "",
-                        valid=valid,
-                        strategy=strat,
-                    ))
-                    if valid:
-                        break  # skip more-bracketed variants
-                continue
+            # Derive locanted sub-parent from the At-probe name by stripping
+            # the astatine prefix.  E.g. "1-astato-4-fluorobenzene" → "4-fluorobenzene".
+            # This preserves locant info that the canonical sub_parent_name
+            # (e.g. "fluorobenzene") lacks, enabling correct prefix ordering.
+            at_prefix = f"{new_parent_locant}-astato"
+            if new_parent_at_name.lower().startswith(at_prefix.lower()):
+                locanted_parent = new_parent_at_name[len(at_prefix):]
+                if locanted_parent.startswith("-"):
+                    locanted_parent = locanted_parent[1:]
+            else:
+                locanted_parent = sub_parent_name
+            for strat, assembled in [
+                ("replace-hal-noparens",
+                 _insert_prefix_by_locant(
+                     locanted_parent, new_parent_locant, yl_form)),
+                ("replace-hal-parens",
+                 _insert_prefix_by_locant(
+                     locanted_parent, new_parent_locant,
+                     f"({yl_form})")),
+            ]:
+                valid = _validate_name(assembled, canonical_smiles)
+                if verbose:
+                    tag = "VALID" if valid else "INVALID"
+                    print(f"    Assembled ({strat}): '{assembled}' [{tag}]",
+                          file=sys.stderr)
+                alternatives.append(Alternative(
+                    name=assembled,
+                    parent_name=sub_parent_name,
+                    sub_name=yl_form,
+                    locant=new_parent_locant or "",
+                    valid=valid,
+                    strategy=strat,
+                ))
+                if valid:
+                    break  # skip more-bracketed variants
+            continue
 
         if "astato" in new_parent_at_name.lower():
             # Try noparens first; skip parens if noparens validates
