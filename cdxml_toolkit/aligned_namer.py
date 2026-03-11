@@ -1906,45 +1906,44 @@ def molecular_diff(sm_smiles: str, prod_smiles: str,
         sm_list = sm_attach.get(mcs_pos, [])
         prod_list = prod_attach.get(mcs_pos, [])
 
-        # Pair SM and product fragments 1:1 as replacements
-        n_pairs = min(len(sm_list), len(prod_list))
-        for i in range(n_pairs):
-            sm_comp, sm_atts = sm_list[i]
-            prod_comp, prod_atts = prod_list[i]
-            sm_frag_smi = _extract_fragment_smiles(sm_mol, sm_comp, sm_atts)
-            prod_frag_smi = _extract_fragment_smiles(prod_mol, prod_comp,
-                                                      prod_atts)
-            sm_name = _name_fragment(sm_frag_smi) if sm_frag_smi else "H"
-            prod_name = _name_fragment(prod_frag_smi) if prod_frag_smi else "H"
+        # Extract all fragment SMILES and names for each side
+        sm_frags = []
+        for comp, atts in sm_list:
+            smi = _extract_fragment_smiles(sm_mol, comp, atts)
+            sm_frags.append((smi, _name_fragment(smi) if smi else "H"))
+        prod_frags = []
+        for comp, atts in prod_list:
+            smi = _extract_fragment_smiles(prod_mol, comp, atts)
+            prod_frags.append((smi, _name_fragment(smi) if smi else "H"))
+
+        if sm_frags and prod_frags:
+            # Replacement at this position.  Multiple fragments on one
+            # side are part of the same transformation (e.g. Grignard
+            # C=O → C(OH)(R)), so combine all names with " + ".
+            sm_names = " + ".join(n for _, n in sm_frags)
+            prod_names = " + ".join(n for _, n in prod_frags)
             changes.append(FragmentChange(
-                sm_frag_smiles=sm_frag_smi,
-                prod_frag_smiles=prod_frag_smi,
-                sm_name=sm_name, prod_name=prod_name,
+                sm_frag_smiles=sm_frags[0][0],
+                prod_frag_smiles=prod_frags[0][0],
+                sm_name=sm_names, prod_name=prod_names,
                 change_type="replace",
             ))
-
-        # Unpaired SM fragments are removals
-        for i in range(n_pairs, len(sm_list)):
-            sm_comp, sm_atts = sm_list[i]
-            sm_frag_smi = _extract_fragment_smiles(sm_mol, sm_comp, sm_atts)
-            sm_name = _name_fragment(sm_frag_smi) if sm_frag_smi else "H"
-            changes.append(FragmentChange(
-                sm_frag_smiles=sm_frag_smi, prod_frag_smiles="",
-                sm_name=sm_name, prod_name="H",
-                change_type="removal",
-            ))
-
-        # Unpaired product fragments are additions
-        for i in range(n_pairs, len(prod_list)):
-            prod_comp, prod_atts = prod_list[i]
-            prod_frag_smi = _extract_fragment_smiles(prod_mol, prod_comp,
-                                                      prod_atts)
-            prod_name = _name_fragment(prod_frag_smi) if prod_frag_smi else "H"
-            changes.append(FragmentChange(
-                sm_frag_smiles="", prod_frag_smiles=prod_frag_smi,
-                sm_name="H", prod_name=prod_name,
-                change_type="addition",
-            ))
+        elif sm_frags:
+            # Pure removals (nothing on product side at this position)
+            for smi, name in sm_frags:
+                changes.append(FragmentChange(
+                    sm_frag_smiles=smi, prod_frag_smiles="",
+                    sm_name=name, prod_name="H",
+                    change_type="removal",
+                ))
+        elif prod_frags:
+            # Pure additions (nothing on SM side at this position)
+            for smi, name in prod_frags:
+                changes.append(FragmentChange(
+                    sm_frag_smiles="", prod_frag_smiles=smi,
+                    sm_name="H", prod_name=name,
+                    change_type="addition",
+                ))
 
     # --- Post-processing: merge unpaired removals + additions ---
     # Symmetric molecules (e.g. benzene) can cause the MCS to map
