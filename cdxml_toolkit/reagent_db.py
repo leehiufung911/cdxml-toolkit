@@ -22,8 +22,34 @@ Usage:
 
 import json
 import os
+import re
 import sys
 from typing import Dict, List, Optional, Tuple, Union
+
+
+# ---------------------------------------------------------------------------
+# Name normalization helpers
+# ---------------------------------------------------------------------------
+
+# Unicode subscript digits → ASCII digits
+_SUBSCRIPT_MAP = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
+
+# Common solvate/salt suffixes to strip (middle-dot or ASCII dot)
+_SOLVATE_SUFFIXES = re.compile(
+    r"[·.](?:chcl3|dcm|ch2cl2|h2o|hcl|thf|dme|meoh|etoh|et2o)\s*$",
+    re.IGNORECASE,
+)
+
+# Racemic/stereochemical prefixes to strip
+_RAC_PREFIX = re.compile(r"^(?:rac-|\(±\)-)", re.IGNORECASE)
+
+
+def _normalize_name(name: str) -> str:
+    """Normalize a reagent name for lookup.
+
+    Converts Unicode subscript digits to ASCII and lowercases.
+    """
+    return name.translate(_SUBSCRIPT_MAP).strip().lower()
 
 
 class ReagentDB:
@@ -106,16 +132,55 @@ class ReagentDB:
 
     # ----- name-based lookups -----
 
+    def _lookup_name_entry(self, name: str, tier1_only: bool = False
+                           ) -> Optional[dict]:
+        """Internal progressive-normalization name lookup.
+
+        Tries (in order):
+          1. Exact (lowered, subscript-normalized)
+          2. With solvate suffix stripped  ("·CHCl3", ".DCM", etc.)
+          3. With rac-/(±)- prefix stripped
+          4. With both solvate suffix and rac- prefix stripped
+
+        Each step checks tier-1 first, then tier-2 (unless tier1_only).
+        """
+        key = _normalize_name(name)
+        candidates = [key]
+
+        # Strip solvate suffix
+        stripped_solvate = _SOLVATE_SUFFIXES.sub("", key).strip()
+        if stripped_solvate != key:
+            candidates.append(stripped_solvate)
+
+        # Strip rac-/(±)- prefix
+        stripped_rac = _RAC_PREFIX.sub("", key).strip()
+        if stripped_rac != key:
+            candidates.append(stripped_rac)
+
+        # Strip both
+        stripped_both = _RAC_PREFIX.sub("", stripped_solvate).strip()
+        if stripped_both not in candidates:
+            candidates.append(stripped_both)
+
+        for cand in candidates:
+            entry = self._by_name.get(cand)
+            if entry:
+                return entry
+            if not tier1_only:
+                entry = self._cs_by_name.get(cand)
+                if entry:
+                    return entry
+
+        return None
+
     def display_for_name(self, name: str) -> Optional[str]:
         """Return display string for a name/alias, or None if unknown.
 
         Checks tier-1 (curated) first, then tier-2 (ChemScanner).
+        Uses progressive normalization (subscripts, solvate stripping,
+        rac- prefix stripping).
         """
-        key = name.strip().lower()
-        entry = self._by_name.get(key)
-        if entry:
-            return entry["display"]
-        entry = self._cs_by_name.get(key)
+        entry = self._lookup_name_entry(name)
         return entry["display"] if entry else None
 
     def role_for_name(self, name: str) -> Optional[str]:
@@ -123,7 +188,7 @@ class ReagentDB:
 
         Tier-1 only — ChemScanner entries have no roles.
         """
-        entry = self._by_name.get(name.strip().lower())
+        entry = self._lookup_name_entry(name, tier1_only=True)
         return entry.get("role") if entry else None
 
     def entry_for_name(self, name: str) -> Optional[dict]:
@@ -131,11 +196,7 @@ class ReagentDB:
 
         Checks tier-1 first, then tier-2.
         """
-        key = name.strip().lower()
-        entry = self._by_name.get(key)
-        if entry:
-            return entry
-        return self._cs_by_name.get(key)
+        return self._lookup_name_entry(name)
 
     # ----- SMILES-based lookups -----
 

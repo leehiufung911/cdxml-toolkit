@@ -225,6 +225,105 @@ class TestTierTwoCascade:
         assert result is not None
 
 
+# =========================================================================
+# Name normalization (subscripts, solvates, rac- prefix)
+# =========================================================================
+
+class TestNameNormalization:
+    """Progressive name normalization handles variant spellings."""
+
+    def test_unicode_subscript_digits(self):
+        db = get_reagent_db()
+        # "Pd₂(dba)₃" → normalizes subscripts → "pd2(dba)3"
+        assert db.display_for_name("Pd₂(dba)₃") == "Pd2(dba)3"
+
+    def test_unicode_subscript_base(self):
+        db = get_reagent_db()
+        assert db.display_for_name("Cs₂CO₃") == "Cs2CO3"
+        assert db.display_for_name("K₂CO₃") == "K2CO3"
+
+    def test_solvate_suffix_stripped_middot(self):
+        db = get_reagent_db()
+        # "Pd2(dba)3·CHCl3" is an explicit entry — should match directly
+        result = db.display_for_name("Pd2(dba)3·CHCl3")
+        assert result is not None
+        assert "Pd2(dba)3" in result
+
+    def test_solvate_suffix_stripped_ascii_dot(self):
+        db = get_reagent_db()
+        result = db.display_for_name("Pd2(dba)3.CHCl3")
+        assert result is not None
+
+    def test_solvate_stripping_falls_back(self):
+        """Stripping ·HCl from an unknown base should try the base name."""
+        db = get_reagent_db()
+        # "EDC·HCl" is an explicit entry, but "DIPEA·HCl" is not —
+        # solvate stripping should resolve to DIPEA
+        result = db.display_for_name("DIPEA·HCl")
+        assert result == "DIPEA"
+
+    def test_rac_prefix_stripped(self):
+        db = get_reagent_db()
+        # "rac-BINAP" is an explicit entry → exact match
+        assert db.display_for_name("rac-BINAP") == "rac-BINAP"
+
+    def test_plusminus_prefix_resolves(self):
+        db = get_reagent_db()
+        # "(±)-BINAP" is an alias of rac-BINAP
+        assert db.display_for_name("(±)-BINAP") == "rac-BINAP"
+
+    def test_rac_prefix_fallback_to_base(self):
+        """rac-XPhos → should strip rac- and resolve to XPhos."""
+        db = get_reagent_db()
+        result = db.display_for_name("rac-XPhos")
+        assert result == "XPhos"
+
+    def test_role_uses_normalization(self):
+        db = get_reagent_db()
+        assert db.role_for_name("Cs₂CO₃") == "base"
+
+    def test_entry_for_name_uses_normalization(self):
+        db = get_reagent_db()
+        entry = db.entry_for_name("Pd₂(dba)₃")
+        assert entry is not None
+        assert "smiles" in entry
+
+
+# =========================================================================
+# New entries
+# =========================================================================
+
+class TestNewEntries:
+    """Test reagent entries added for expanded med-chem coverage."""
+
+    def test_ibx(self):
+        db = get_reagent_db()
+        assert db.display_for_name("ibx") == "IBX"
+        assert db.role_for_name("ibx") == "oxidant"
+        assert db.entry_for_name("ibx").get("smiles") is not None
+
+    def test_cutc(self):
+        db = get_reagent_db()
+        assert db.display_for_name("cutc") == "CuTC"
+        assert db.role_for_name("cutc") == "catalyst"
+
+    def test_edci_alias(self):
+        db = get_reagent_db()
+        assert db.display_for_name("edci") == "EDC"
+        assert db.role_for_name("edci") == "coupling_reagent"
+
+    def test_stab_alias(self):
+        db = get_reagent_db()
+        assert db.display_for_name("stab") == "NaBH(OAc)3"
+        assert db.role_for_name("stab") == "reducing_agent"
+
+    def test_pd_dppf_cl2_dcm_solvate(self):
+        db = get_reagent_db()
+        result = db.display_for_name("pd(dppf)cl2·dcm")
+        assert result is not None
+        assert "dppf" in result.lower()
+
+
 class TestGracefulDegradation:
     """Tier-1 should still work if tier-2 file is missing."""
 

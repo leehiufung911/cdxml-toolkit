@@ -63,7 +63,8 @@
         "display": "rac-BINAP",
         "role": "ligand",
         "aliases": [
-            "racbinap"
+            "racbinap",
+            "(±)-binap"
         ],
         "smiles": "C1=CC=C(C=C1)P(C2=CC=CC=C2)C3=C(C4=CC=CC=C4C=C3)C5=C(C=CC6=CC=CC=C65)P(C7=CC=CC=C7)C8=CC=CC=C8"
     },
@@ -344,7 +345,8 @@
     "edc": {
         "display": "EDC",
         "role": "coupling_reagent",
-        "smiles": "CCN=C=NCCCN(C)C"
+        "smiles": "CCN=C=NCCCN(C)C",
+        "aliases": ["edci", "edac"]
     },
     "edc·hcl": {
         "display": "EDC·HCl",
@@ -436,7 +438,8 @@
     "nabh(oac)3": {
         "display": "NaBH(OAc)3",
         "role": "reducing_agent",
-        "smiles": "[BH-](OC(=O)C)(OC(=O)C)OC(=O)C.[Na+]"
+        "smiles": "[BH-](OC(=O)C)(OC(=O)C)OC(=O)C.[Na+]",
+        "aliases": ["stab", "sodium triacetoxyborohydride"]
     },
     "nabh3cn": {
         "display": "NaBH3CN",
@@ -962,5 +965,29 @@
         "role": "solvent",
         "smiles": "[2H]O[2H]",
         "aliases": ["deuterium oxide", "heavy water"]
+    },
+    "ibx": {
+        "display": "IBX",
+        "role": "oxidant",
+        "smiles": "OI1(=O)OC(=O)c2ccccc12",
+        "aliases": ["2-iodoxybenzoic acid"]
+    },
+    "pd(dppf)cl2·dcm": {
+        "display": "Pd(dppf)Cl2·DCM",
+        "role": "catalyst",
+        "smiles": "[CH-]1C=CC(=C1)P(C2=CC=CC=C2)C3=CC=CC=C3.[CH-]1C=CC(=C1)P(C2=CC=CC=C2)C3=CC=CC=C3.Cl[Pd]Cl.[Fe+2].ClCCl",
+        "aliases": ["pd(dppf)cl2.dcm", "pd(dppf)cl2 dcm"]
+    },
+    "pd2(dba)3·chcl3": {
+        "display": "Pd2(dba)3·CHCl3",
+        "role": "catalyst",
+        "smiles": "C1=CC=C(C=C1)/C=C/C(=O)/C=C/C2=CC=CC=C2.C1=CC=C(C=C1)/C=C/C(=O)/C=C/C2=CC=CC=C2.C1=CC=C(C=C1)/C=C/C(=O)/C=C/C2=CC=CC=C2.C(Cl)(Cl)Cl.[Pd].[Pd]",
+        "aliases": ["pd2(dba)3.chcl3", "pd2dba3·chcl3", "pd2dba3.chcl3"]
+    },
+    "cutc": {
+        "display": "CuTC",
+        "role": "catalyst",
+        "smiles": "C1=CSC(=C1)C(=O)[O-].[Cu+]",
+        "aliases": ["copper(i) thiophene-2-carboxylate"]
     }
 }

@@ -58,9 +58,9 @@ cdxml-image scheme.cdxml
 
 **What each step does:**
 
-1. **Reaction parsing** (`reaction_parser`) — extracts every species with canonical SMILES, role classification (3-tier: reagent_db lookup, RXNMapper atom mapping, RDKit MCS), display names, equivalents, mass data, and adducts. Produces a single JSON source of truth.
+1. **Reaction parsing** (`reaction_parser`) — extracts every species with canonical SMILES, role classification (2-tier: Schneider FP scoring for binary reactant/reagent, curated DB for semantic roles), display names, equivalents, mass data, and adducts. Produces a single JSON source of truth.
 
-2. **Layout decisions** (`scheme_yaml_writer`) — determines which species are drawn structures vs text labels, positions them above/below the arrow, sorts by role priority.
+2. **Layout decisions** (`scheme_yaml_writer`) — determines which species are drawn structures vs text labels, positions them above/below the arrow, sorts by role priority. Also handles **multi-reaction merging**: classifies reaction pairs as parallel/sequential/unrelated via canonical SMILES, clusters with Union-Find, and produces combined scheme YAML with stacked run arrows and range equiv notation.
 
 3. **CDXML rendering** (`renderer`) — generates 2D coordinates from SMILES via RDKit, computes bounding boxes, sizes the arrow to fit content, formats chemical text (subscripts, italics), and outputs ACS-styled CDXML.
 
@@ -139,8 +139,7 @@ Surgically modifies an ELN-exported CDXML rather than building from scratch. Pre
 ```bash
 cdxml-polish experiment.cdxml -o polished.cdxml \
     --approach chemdraw_mimic \
-    --align-mode rxnmapper \
-    --classify-method rxnmapper \
+    --align-mode mcs \
     --eln-csv experiment.csv
 ```
 
@@ -160,6 +159,9 @@ cdxml_toolkit/
 ├── reaction_cleanup.py         # Pure Python reaction layout (6 approaches)
 ├── reaction_parser.py          # Reaction → JSON semantic descriptor
 ├── reactant_heuristic.py       # Reagent role classification
+├── scheme_reader.py            # Read CDXML → structured SchemeDescription JSON
+├── scheme_segmenter.py         # Multi-panel CDXML auto-segmentation
+├── spatial_assignment.py       # Geometry-based element → arrow assignment
 ├── scheme_polisher.py          # Scheme polishing (classify, swap, align)
 ├── scheme_polisher_v2.py       # Full polishing pipeline
 ├── scheme_merger.py            # Multi-scheme merging (parallel/sequential/auto)
@@ -218,6 +220,13 @@ Chemistry-specific text formatting for CDXML `<s>` elements:
 ### reagent_db.py
 Two-tier reagent database. Tier-1 (172 curated entries with roles) always wins. Tier-2 (5,837 ChemScanner entries, no roles) is fallback. Key methods: `display_for_name()`, `role_for_name()`, `display_for_smiles()`, `smiles_role_display()`.
 
+### scheme_reader.py
+Reads CDXML reaction schemes into structured `SchemeDescription` JSON. Dual-strategy parsing: step-attribute (ChemDraw native `<scheme><step>`) or geometry-based (spatial arrow detection). Key concepts:
+- **Text classification** (`_classify_text_species`): categorises `<t>` elements near arrows as `"chemical"`, `"condition_ref"`, `"footnote"`, `"yield"`, `"compound_label"`, `"citation"`, or `"bioactivity"`. Only `"chemical"` species undergo SMILES resolution; others are metadata.
+- **Footnote linking**: condition_ref letters (a, b, c above arrows) are linked to `(a) conditions...` footnote text blocks elsewhere on the page.
+- **Multi-line text splitting**: `"chemical"` text blocks are split on newlines/commas into individual `SpeciesRecord`s, filtering yields, labels, and condition tokens.
+- Returns `SchemeDescription` with `species` dict, `steps` list, `topology`, `content_type`, `narrative`, and optional `scope_entries`.
+
 ### eln_csv_parser.py
 Parses Findmolecule ELN CSV exports (semicolon-delimited, @TYPE sections) into `ExperimentData` dataclass with reactants, solvents, product, and metadata. Pure stdlib, no external dependencies.
 
@@ -265,7 +274,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-327 tests. All pure Python — no ChemDraw COM required for the test suite.
+337 tests. All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 
