@@ -1801,6 +1801,80 @@ def _validate_name(name: str, expected_canonical: str) -> bool:
     return canon == expected_canonical
 
 
+# ---------------------------------------------------------------------------
+# Suffix → prefix conversion
+# ---------------------------------------------------------------------------
+
+# (suffix, prefix_form, terminal_e_elided_before_suffix)
+# Longest suffix first to avoid partial matches.
+_SUFFIX_PREFIX_MAP = [
+    ("carboxylic acid", "carboxy", False),
+    ("carbaldehyde", "formyl", False),
+    ("carboxamide", "carbamoyl", False),
+    ("amine", "amino", True),
+    ("ol", "hydroxy", True),
+    ("one", "oxo", True),
+    ("thiol", "sulfanyl", False),
+]
+
+
+def _suffix_to_prefix_alternatives(canonical_name: str,
+                                    canonical_smiles: str,
+                                    verbose: bool = False,
+                                    ) -> List[Alternative]:
+    """Convert IUPAC suffix to prefix form.
+
+    E.g. pyridin-4-amine → 4-aminopyridine,
+         cyclohexan-1-ol → 1-hydroxycyclohexane.
+
+    Only handles single-locant suffixes (not multiplied like 1,4-diamine).
+    """
+    alternatives: List[Alternative] = []
+
+    for suffix, prefix, e_elided in _SUFFIX_PREFIX_MAP:
+        if not canonical_name.endswith(suffix):
+            continue
+
+        before = canonical_name[:-len(suffix)]
+        # Expect: {stem}-{locant(s)}-
+        m = re.match(r'^(.+)-(\d+(?:,\d+)*)-$', before)
+        if not m:
+            continue
+
+        stem = m.group(1)
+        locants_str = m.group(2)
+
+        # Skip multiplied locants for now (e.g. benzene-1,4-diamine)
+        if ',' in locants_str:
+            continue
+
+        # Restore terminal 'e' if elided before vowel-starting suffix
+        parent = stem + 'e' if e_elided else stem
+
+        # Assemble prefix form via locant-ordered insertion
+        assembled = _insert_prefix_by_locant(parent, locants_str, prefix)
+
+        valid = _validate_name(assembled, canonical_smiles)
+        if verbose:
+            tag = "VALID" if valid else "INVALID"
+            print(f"    Suffix→prefix ({suffix}→{prefix}): "
+                  f"'{assembled}' [{tag}]", file=sys.stderr)
+
+        alternatives.append(Alternative(
+            name=assembled,
+            parent_name=parent,
+            sub_name=prefix,
+            locant=locants_str,
+            valid=valid,
+            strategy="suffix-to-prefix",
+        ))
+
+        # Only one principal characteristic group per name
+        break
+
+    return alternatives
+
+
 def _deduplicate_alternatives(alternatives: List[Alternative],
                                verbose: bool = False) -> List[Alternative]:
     """Remove redundant alternatives: bracket-only variants and
@@ -2076,6 +2150,11 @@ def decompose_name(smiles: str, max_depth: int = -1,
                         max_depth=max_depth, _deadline=_deadline,
                     )
                     result.alternatives.extend(alts)
+
+    # Suffix→prefix conversion (e.g. pyridin-4-amine → 4-aminopyridine)
+    suffix_alts = _suffix_to_prefix_alternatives(
+        canonical_name, canon_smi, verbose=verbose)
+    result.alternatives.extend(suffix_alts)
 
     # Deduplicate alternatives:
     # 1. Remove exact-name duplicates and names identical to canonical
