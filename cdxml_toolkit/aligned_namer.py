@@ -841,6 +841,68 @@ def _reorder_locant_prefixes(name: str, parent: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Retained name → substitutive prefix + ring decomposition
+# ---------------------------------------------------------------------------
+# Retained names like "aniline" are systematically "aminobenzene" (prefix
+# + ring).  When the retained name appears as a parent with numbered
+# substituent prefixes (e.g. "4-fluoroaniline"), we can generate the
+# fully substitutive form "4-fluoro-1-aminobenzene" where the retained
+# name's defining substituent gets its own locant.  This often yields a
+# closer text match in aligned sequences.
+
+# (retained_name, substituent_prefix, ring_name, default_locant)
+# default_locant: position of the defining substituent in the standard
+# numbering.  None means the retained name is used for multiple isomers
+# (e.g. naphthol can be 1- or 2-).
+_RETAINED_SUBSTITUTIVE = [
+    ("aniline", "amino", "benzene", "1"),
+    ("phenol", "hydroxy", "benzene", "1"),
+    ("anisole", "methoxy", "benzene", "1"),
+    ("thiophenol", "sulfanyl", "benzene", "1"),
+    ("naphthol", "hydroxy", "naphthalene", None),
+]
+
+
+def _retained_to_substitutive_variants(
+    name: str, parent: str,
+) -> List[Tuple[str, str]]:
+    """Generate fully substitutive variants from retained parent names.
+
+    "4-fluoroaniline" → "4-fluoro-1-aminobenzene" (parent: benzene)
+    "2,6-dichlorophenol" → "2,6-dichloro-1-hydroxybenzene" (parent: benzene)
+
+    The locant reorder pass later normalises to ascending order:
+    "4-fluoro-1-aminobenzene" → "1-amino-4-fluorobenzene"
+    """
+    variants: List[Tuple[str, str]] = []
+    name_lower = name.lower()
+
+    for retained, prefix, ring, locant in _RETAINED_SUBSTITUTIVE:
+        if retained not in name_lower:
+            continue
+        if locant is None:
+            continue  # skip ambiguous retained names
+
+        idx = name_lower.index(retained)
+        leading = name[:idx]          # e.g. "4-fluoro" from "4-fluoroaniline"
+        trailing = name[idx + len(retained):]  # e.g. "" (usually empty)
+
+        # Build substitutive form: "leading-LOCANT-PREFIX-ring-trailing"
+        if leading:
+            # Ensure proper hyphenation
+            lead = leading.rstrip('-')
+            variant = f"{lead}-{locant}-{prefix}{ring}{trailing}"
+        else:
+            variant = f"{locant}-{prefix}{ring}{trailing}"
+
+        variant = re.sub(r'-{2,}', '-', variant)
+        new_parent = ring
+        variants.append((variant, new_parent))
+
+    return variants
+
+
 def _generate_alignment_variants(
     name: str, parent: str,
 ) -> List[Tuple[str, str]]:
@@ -857,6 +919,7 @@ def _generate_alignment_variants(
         variants.append((reordered, parent))
     variants.extend(_ester_variants(name, parent))
     variants.extend(_retained_systematic_variants(name, parent))
+    variants.extend(_retained_to_substitutive_variants(name, parent))
     variants.extend(_indicated_h_variants(name, parent))
     variants.extend(_general_suffix_prefix_variants(name, parent))
     return variants
@@ -1689,6 +1752,24 @@ def _name_fragment(frag_smiles: str) -> str:
     if heavy == 0:
         return "H"
 
+    # Detect =O (oxo/carbonyl) vs -OH (hydroxy) — the generic substituent
+    # namer may not distinguish bond order.
+    if heavy == 1:
+        atom = next(a for a in mol.GetAtoms() if a.GetAtomicNum() > 1)
+        if atom.GetAtomicNum() == 8:  # oxygen
+            # Check if any bond to a dummy atom is a double bond
+            for bond in atom.GetBonds():
+                if bond.GetOtherAtom(atom).GetAtomicNum() == 0:  # [*]
+                    if bond.GetBondTypeAsDouble() == 2.0:
+                        return "oxo"
+            return "hydroxy"
+        if atom.GetAtomicNum() == 16:  # sulfur
+            for bond in atom.GetBonds():
+                if bond.GetOtherAtom(atom).GetAtomicNum() == 0:
+                    if bond.GetBondTypeAsDouble() == 2.0:
+                        return "thioxo"
+            return "sulfanyl"
+
     result = name_fragment_as_substituent(frag_smiles, verbose=False)
     return result if result else frag_smiles
 
@@ -1792,9 +1873,11 @@ def molecular_diff(sm_smiles: str, prod_smiles: str,
     # --- Find attachment points ---
     # For each component, find bonds from non-MCS to MCS atoms.
     # Key: MCS core position (index in sm_match/prod_match tuple)
+    # Multiple fragments can attach to the same core atom (e.g. Grignard
+    # addition: C=O → C(OH)(R) produces two product fragments on one atom).
     def _find_attachments(mol, components, core_set, match_tuple):
-        """Return {mcs_pos: (component, [(frag_idx, core_idx), ...])}."""
-        attach_map: dict = {}
+        """Return {mcs_pos: [(component, [(frag_idx, core_idx), ...]), ...]}."""
+        attach_map: dict = {}  # mcs_pos -> list of (comp, atts)
         for comp in components:
             atts: List[Tuple[int, int]] = []
             for atom_idx in comp:
@@ -1803,10 +1886,13 @@ def molecular_diff(sm_smiles: str, prod_smiles: str,
                     if nidx in core_set:
                         atts.append((atom_idx, nidx))
             # Key by MCS core position (to enable pairing)
+            # A component may attach to multiple core atoms; use the first.
+            mcs_positions_seen: set = set()
             for _, core_idx in atts:
                 mcs_pos = match_tuple.index(core_idx)
-                if mcs_pos not in attach_map:
-                    attach_map[mcs_pos] = (comp, atts)
+                if mcs_pos not in mcs_positions_seen:
+                    mcs_positions_seen.add(mcs_pos)
+                    attach_map.setdefault(mcs_pos, []).append((comp, atts))
         return attach_map
 
     sm_attach = _find_attachments(sm_mol, sm_comps, sm_core, sm_match)
@@ -1817,38 +1903,48 @@ def molecular_diff(sm_smiles: str, prod_smiles: str,
     changes: List[FragmentChange] = []
 
     for mcs_pos in sorted(all_mcs_positions):
-        sm_data = sm_attach.get(mcs_pos)
-        prod_data = prod_attach.get(mcs_pos)
+        sm_list = sm_attach.get(mcs_pos, [])
+        prod_list = prod_attach.get(mcs_pos, [])
 
-        if sm_data and prod_data:
-            sm_comp, sm_atts = sm_data
-            prod_comp, prod_atts = prod_data
+        # Pair SM and product fragments 1:1 as replacements
+        n_pairs = min(len(sm_list), len(prod_list))
+        for i in range(n_pairs):
+            sm_comp, sm_atts = sm_list[i]
+            prod_comp, prod_atts = prod_list[i]
             sm_frag_smi = _extract_fragment_smiles(sm_mol, sm_comp, sm_atts)
             prod_frag_smi = _extract_fragment_smiles(prod_mol, prod_comp,
                                                       prod_atts)
-            change_type = "replace"
-        elif sm_data and not prod_data:
-            sm_comp, sm_atts = sm_data
+            sm_name = _name_fragment(sm_frag_smi) if sm_frag_smi else "H"
+            prod_name = _name_fragment(prod_frag_smi) if prod_frag_smi else "H"
+            changes.append(FragmentChange(
+                sm_frag_smiles=sm_frag_smi,
+                prod_frag_smiles=prod_frag_smi,
+                sm_name=sm_name, prod_name=prod_name,
+                change_type="replace",
+            ))
+
+        # Unpaired SM fragments are removals
+        for i in range(n_pairs, len(sm_list)):
+            sm_comp, sm_atts = sm_list[i]
             sm_frag_smi = _extract_fragment_smiles(sm_mol, sm_comp, sm_atts)
-            prod_frag_smi = ""
-            change_type = "removal"
-        else:  # prod_data and not sm_data
-            prod_comp, prod_atts = prod_data
-            sm_frag_smi = ""
+            sm_name = _name_fragment(sm_frag_smi) if sm_frag_smi else "H"
+            changes.append(FragmentChange(
+                sm_frag_smiles=sm_frag_smi, prod_frag_smiles="",
+                sm_name=sm_name, prod_name="H",
+                change_type="removal",
+            ))
+
+        # Unpaired product fragments are additions
+        for i in range(n_pairs, len(prod_list)):
+            prod_comp, prod_atts = prod_list[i]
             prod_frag_smi = _extract_fragment_smiles(prod_mol, prod_comp,
                                                       prod_atts)
-            change_type = "addition"
-
-        sm_name = _name_fragment(sm_frag_smi) if sm_frag_smi else "H"
-        prod_name = _name_fragment(prod_frag_smi) if prod_frag_smi else "H"
-
-        changes.append(FragmentChange(
-            sm_frag_smiles=sm_frag_smi,
-            prod_frag_smiles=prod_frag_smi,
-            sm_name=sm_name,
-            prod_name=prod_name,
-            change_type=change_type,
-        ))
+            prod_name = _name_fragment(prod_frag_smi) if prod_frag_smi else "H"
+            changes.append(FragmentChange(
+                sm_frag_smiles="", prod_frag_smiles=prod_frag_smi,
+                sm_name="H", prod_name=prod_name,
+                change_type="addition",
+            ))
 
     # --- Post-processing: merge unpaired removals + additions ---
     # Symmetric molecules (e.g. benzene) can cause the MCS to map
