@@ -218,13 +218,17 @@ Chemistry-specific text formatting for CDXML `<s>` elements:
 - Italic IUPAC prefixes: "n-BuLi" → "*n*-BuLi"
 
 ### reagent_db.py
-Two-tier reagent database. Tier-1 (172 curated entries with roles) always wins. Tier-2 (5,837 ChemScanner entries, no roles) is fallback. Key methods: `display_for_name()`, `role_for_name()`, `display_for_smiles()`, `smiles_role_display()`.
+Two-tier reagent database. Tier-1 (~176 curated entries with roles) always wins. Tier-2 (5,837 ChemScanner entries, no roles) is fallback. Key methods: `display_for_name()`, `role_for_name()`, `display_for_smiles()`, `smiles_role_display()`.
+
+**Name normalization** (progressive, in `_lookup_name_entry()`): Unicode subscript digits → ASCII (Pd₂(dba)₃ → pd2(dba)3), solvate suffix stripping (·CHCl3, .DCM, ·HCl, etc.), rac-/(±)- prefix stripping with fallback to base ligand name. All three name-lookup methods use this cascade.
 
 ### scheme_reader.py
 Reads CDXML reaction schemes into structured `SchemeDescription` JSON. Dual-strategy parsing: step-attribute (ChemDraw native `<scheme><step>`) or geometry-based (spatial arrow detection). Key concepts:
 - **Text classification** (`_classify_text_species`): categorises `<t>` elements near arrows as `"chemical"`, `"condition_ref"`, `"footnote"`, `"yield"`, `"compound_label"`, `"citation"`, or `"bioactivity"`. Only `"chemical"` species undergo SMILES resolution; others are metadata.
 - **Footnote linking**: condition_ref letters (a, b, c above arrows) are linked to `(a) conditions...` footnote text blocks elsewhere on the page.
-- **Multi-line text splitting**: `"chemical"` text blocks are split on newlines/commas into individual `SpeciesRecord`s, filtering yields, labels, and condition tokens.
+- **Multi-line text splitting**: `"chemical"` text blocks (e.g. "Pd2(dba)3 (5 mol%)\nrac-BINAP (10 mol%)\nCs2CO3 (2.0 eq)\n1,4-dioxane\nreflux, 24 h") are split on newlines, then on comma+space or semicolons (protecting names like "1,4-dioxane") into individual `SpeciesRecord`s. Condition tokens (temperature, time, atmosphere) are filtered via `_is_condition_token()` and go to `step.conditions` only.
+- **`SpeciesRecord` fields**: `is_solvent` (bool, set when `reagent_db.role_for_name()` returns `"solvent"`), `equiv_text` (e.g. "1.2 eq", "5 mol%", extracted from parenthetical annotations), `text_category`.
+- **`elem_to_species`** maps CDXML element IDs to `List[str]` of species IDs (one-to-many for split text blocks).
 - Returns `SchemeDescription` with `species` dict, `steps` list, `topology`, `content_type`, `narrative`, and optional `scope_entries`.
 
 ### eln_csv_parser.py
@@ -274,7 +278,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-337 tests. All pure Python — no ChemDraw COM required for the test suite.
+495 tests. All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 
