@@ -1362,8 +1362,10 @@ def _insert_prefix_by_locant(name: str, locant: str,
             i = j
         else:
             i += 1
-    # Fallback: prepend
-    return f"{locant}-{prefix_text}-" + name
+    # Fallback: prepend.  No trailing hyphen when *name* starts with a
+    # letter (the parent stem), e.g. "2-bromo" + "quinoline" → "2-bromoquinoline".
+    sep = "-" if name and name[0].isdigit() else ""
+    return f"{locant}-{prefix_text}{sep}" + name
 
 
 # ---------------------------------------------------------------------------
@@ -1645,7 +1647,8 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                         break  # skip more-bracketed variants
 
     # Recursive decomposition: try alternative parent names for sub-fragment
-    if max_depth > 0 and new_parent_locant:
+    # max_depth: -1 = unlimited (until timeout), 0 = disabled, >0 = N levels
+    if max_depth != 0 and new_parent_locant:
         if _deadline is not None and time.monotonic() > _deadline:
             if verbose:
                 print(f"    Skipping recursive decomposition (timeout)",
@@ -1654,7 +1657,8 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
             if verbose:
                 print(f"    Recursive decomposition of sub-fragment "
                       f"(max_depth={max_depth})...", file=sys.stderr)
-            sub_decomp = decompose_name(frags.sub_smi, max_depth=max_depth - 1,
+            next_depth = max_depth - 1 if max_depth > 0 else max_depth
+            sub_decomp = decompose_name(frags.sub_smi, max_depth=next_depth,
                                         verbose=verbose, _deadline=_deadline)
 
             # Collect recursive alt parent names (deduplicated)
@@ -1719,6 +1723,69 @@ def _assemble_alternatives(frags: FragmentResult, canonical_smiles: str,
                         ))
                         if valid:
                             break  # skip more-bracketed variants
+
+    # Se-probe reverse assembly: the Se-probe yl of the old parent may
+    # encode a suffix→prefix conversion (e.g. "-3-carbaldehyde" becomes
+    # "3-formyl-" inside the yl text).  Extract the converted parent name
+    # and insert the sub-fragment's prefix form at the attachment locant.
+    if se_yl and max_depth != 0:
+        yl_text = se_yl.strip('()[]')
+        se_parent = _parent_name_from_bracket_yl(yl_text)
+        if (se_parent and se_parent != sub_parent_name
+                and se_parent != parent_name):
+            # Verify the extracted parent resolves to the same molecule
+            se_parent_smi = _name_to_smiles(se_parent)
+            parent_canon = _canonical(frags.parent_smi)
+            if (se_parent_smi and parent_canon
+                    and _canonical(se_parent_smi) == parent_canon):
+                # Get the attachment locant from the yl text
+                m_loc = re.search(r'-(\d+)-yl$', yl_text)
+                if m_loc:
+                    se_locant = m_loc.group(1)
+                    # Compute sub-fragment prefix/yl forms
+                    sub_yl_candidates = construct_yl_form(
+                        sub_parent_name, new_parent_locant or "")
+                    sub_se_yl = _get_yl_via_selenyl_probe(
+                        frags.sub_mol, frags.sub_attach_idx,
+                        verbose=verbose)
+                    if sub_se_yl and sub_se_yl not in sub_yl_candidates:
+                        sub_yl_candidates.insert(0, sub_se_yl)
+
+                    if verbose:
+                        print(f"    Se-reverse parent: '{se_parent}' "
+                              f"(locant={se_locant})",
+                              file=sys.stderr)
+                        print(f"    Sub-fragment yl candidates: "
+                              f"{sub_yl_candidates}", file=sys.stderr)
+
+                    for sub_yl in sub_yl_candidates:
+                        # Try noparens first; skip parens if valid
+                        for strat, assembled in [
+                            ("se-reverse-noparens",
+                             _insert_prefix_by_locant(
+                                 se_parent, se_locant, sub_yl)),
+                            ("se-reverse-parens",
+                             _insert_prefix_by_locant(
+                                 se_parent, se_locant,
+                                 f"({sub_yl})")),
+                        ]:
+                            valid = _validate_name(
+                                assembled, canonical_smiles)
+                            if verbose:
+                                tag = "VALID" if valid else "INVALID"
+                                print(f"    Se-reverse ({strat}): "
+                                      f"'{assembled}' [{tag}]",
+                                      file=sys.stderr)
+                            alternatives.append(Alternative(
+                                name=assembled,
+                                parent_name=se_parent,
+                                sub_name=sub_yl,
+                                locant=se_locant,
+                                valid=valid,
+                                strategy=strat,
+                            ))
+                            if valid:
+                                break  # skip more-bracketed variants
 
     return alternatives
 
@@ -1870,7 +1937,7 @@ def _deduplicate_alternatives(alternatives: List[Alternative],
 # Main decomposition
 # ---------------------------------------------------------------------------
 
-def decompose_name(smiles: str, max_depth: int = 1,
+def decompose_name(smiles: str, max_depth: int = -1,
                    verbose: bool = False,
                    timeout: Optional[float] = 30.0,
                    _deadline: Optional[float] = None,
@@ -1883,6 +1950,9 @@ def decompose_name(smiles: str, max_depth: int = 1,
     4. For each substituent group, generate alternative names
 
     Args:
+        max_depth: Recursion depth limit.  ``-1`` (default) = unlimited
+            (recurse until timeout or convergence).  ``0`` = no recursion.
+            Positive integer = that many levels.
         timeout: Wall-clock seconds before recursive decomposition is
             skipped.  Set to ``None`` to disable.  Only used on the
             outermost call; recursive calls inherit the computed deadline
@@ -2008,8 +2078,8 @@ def decompose_name(smiles: str, max_depth: int = 1,
                     result.alternatives.extend(alts)
 
     # Deduplicate alternatives:
-    # 1. Remove exact-name duplicates
-    seen: set = set()
+    # 1. Remove exact-name duplicates and names identical to canonical
+    seen: set = {canonical_name}  # canonical is already listed separately
     unique: list = []
     for alt in result.alternatives:
         if alt.name not in seen:
@@ -2485,8 +2555,9 @@ def main():
                         help="Print detailed progress to stderr")
     parser.add_argument("--json", action="store_true",
                         help="Output as JSON")
-    parser.add_argument("--max-depth", type=int, default=1,
-                        help="Maximum recursion depth (default: 1)")
+    parser.add_argument("--max-depth", type=int, default=-1,
+                        help="Maximum recursion depth (default: -1, "
+                        "unlimited until timeout). 0 = no recursion.")
     parser.add_argument("--timeout", type=float, default=30.0,
                         help="Timeout in seconds (default: 30). "
                              "Use 0 to disable.")
