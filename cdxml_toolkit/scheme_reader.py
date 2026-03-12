@@ -1335,6 +1335,22 @@ def _build_species_registry(
                     # Protects "1,4-dioxane" (no space after comma)
                     parts = re.split(r'\s*;\s*|,\s+', clean_line)
 
+                    # Further split "/" mixtures into separate entities.
+                    # e.g. "dioxane/H2O (3:1)" → ["dioxane", "H2O"]
+                    # Strip trailing ratio annotations like "(3:1)" first.
+                    expanded_parts: list = []
+                    _ratio_re = re.compile(
+                        r'\s*\(\d+:\d+\)\s*$')
+                    for p in parts:
+                        p_clean = _ratio_re.sub("", p).strip()
+                        if "/" in p_clean:
+                            expanded_parts.extend(
+                                s.strip() for s in p_clean.split("/")
+                                if s.strip())
+                        else:
+                            expanded_parts.append(p_clean)
+                    parts = expanded_parts
+
                     for pi, part in enumerate(parts):
                         part = part.strip()
                         if not part:
@@ -1350,6 +1366,35 @@ def _build_species_registry(
                             continue
                         # Skip single letters (false resolutions)
                         if part.lower() in _LETTER_SMILES_BLACKLIST:
+                            continue
+
+                        # Strip qualifier suffixes: "(cat.)", "(xs)",
+                        # "(excess)", "(aq.)", "(anhyd.)" etc.
+                        part = re.sub(
+                            r'\s*\((cat\.?|xs|excess|anhyd\.?|'
+                            r'aq\.?|anhydrous|catalytic|sat\.?|'
+                            r'conc\.?|dil\.?)\)\s*$',
+                            '', part, flags=re.IGNORECASE).strip()
+                        if not part:
+                            continue
+
+                        # Skip reaction names / workup text that got
+                        # through as "chemical".  Heuristic: if the
+                        # token contains only Latin words (no digits,
+                        # no chemical punctuation like parentheses or
+                        # brackets), and it contains a known non-
+                        # chemical keyword, skip it.
+                        _lower = part.lower()
+                        _NON_CHEM_KEYWORDS = {
+                            "formylation", "coupling", "reaction",
+                            "addition", "reduction", "oxidation",
+                            "cyclization", "rearrangement", "workup",
+                            "work-up", "quench", "extraction",
+                        }
+                        if any(kw in _lower for kw in _NON_CHEM_KEYWORDS):
+                            continue
+                        # Skip "then ..." workup prefixes
+                        if _lower.startswith("then "):
                             continue
 
                         # Resolve SMILES

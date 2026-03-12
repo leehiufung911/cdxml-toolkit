@@ -154,6 +154,7 @@ cdxml_toolkit/
 ├── text_formatting.py          # Chemical subscripts + italic prefixes
 ├── reagent_db.py               # Two-tier reagent database (~176 + 5,837 entries)
 ├── superatom_table.py          # Abbreviation label → SMILES (~2,850 entries)
+├── condensed_formula.py        # Condensed formula parser (PhB(OH)2 → SMILES)
 ├── eln_csv_parser.py           # Findmolecule ELN CSV parser
 ├── alignment.py                # Structure alignment (Kabsch, MCS, RXNMapper)
 ├── reaction_cleanup.py         # Pure Python reaction layout (6 approaches)
@@ -218,9 +219,22 @@ Chemistry-specific text formatting for CDXML `<s>` elements:
 - Italic IUPAC prefixes: "n-BuLi" → "*n*-BuLi"
 
 ### reagent_db.py
-Two-tier reagent database. Tier-1 (~176 curated entries with roles) always wins. Tier-2 (5,837 ChemScanner entries, no roles) is fallback. Key methods: `display_for_name()`, `role_for_name()`, `display_for_smiles()`, `smiles_role_display()`.
+Two-tier reagent database. Tier-1 (~186 curated entries with roles) always wins. Tier-2 (5,837 ChemScanner entries, no roles) is fallback. Key methods: `display_for_name()`, `role_for_name()`, `display_for_smiles()`, `smiles_role_display()`.
 
 **Name normalization** (progressive, in `_lookup_name_entry()`): Unicode subscript digits → ASCII (Pd₂(dba)₃ → pd2(dba)3), solvate suffix stripping (·CHCl3, .DCM, ·HCl, etc.), rac-/(±)- prefix stripping with fallback to base ligand name. All three name-lookup methods use this cascade.
+
+### condensed_formula.py
+Generative parser for condensed structural formulae (PhB(OH)₂, Et₃N, Me₃SiCl, etc.). Uses the superatom table (2,854 entries) as fragment vocabulary. Two phases:
+
+1. **Tokenizer** (`tokenize()`): greedy longest-match against superatom table + periodic table elements. Token types: `abbrev`, `element`, `count`, `paren_open`, `paren_close`. Two-letter elements (Na, Ag, Si) always match before abbreviations. Single-letter element collisions (n→N, s→S, etc. in superatom table) are excluded from abbreviation matching.
+
+2. **Assembler** (`resolve_condensed_formula()`): RDKit-based molecule assembly from token stream. Handles five patterns: linear (MeI), multiplied groups (Et₃N), parenthesised branches (PhB(OH)₂), hydrogen subscripts (PhCH₂Br), and ionic/metal (Ag₂O). Validates with `Chem.SanitizeMol()`. Returns canonical SMILES or None.
+
+**Resolution chain** in `reaction_parser._resolve_text_label()`:
+1. reagent_db (curated dictionary)
+2. condensed formula parser (generative, offline)
+3. OPSIN (offline, IUPAC/systematic names)
+4. PubChem (online, if `use_network=True`)
 
 ### scheme_reader.py
 Reads CDXML reaction schemes into structured `SchemeDescription` JSON. Dual-strategy parsing: step-attribute (ChemDraw native `<scheme><step>`) or geometry-based (spatial arrow detection). Key concepts:
@@ -278,7 +292,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-495 tests. All pure Python — no ChemDraw COM required for the test suite.
+573 tests. All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 

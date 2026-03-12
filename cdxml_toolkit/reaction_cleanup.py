@@ -111,18 +111,8 @@ def _get_arrow(page: ET.Element, step: ET.Element,
 
 def _arrow_endpoints(arrow: ET.Element) -> Tuple[float, float, float, float]:
     """Return (tail_x, tail_y, head_x, head_y) from arrow element."""
-    head = arrow.get("Head3D", "")
-    tail = arrow.get("Tail3D", "")
-    if head and tail:
-        hp = [float(v) for v in head.split()]
-        tp = [float(v) for v in tail.split()]
-        return tp[0], tp[1], hp[0], hp[1]
-    # Fallback: BoundingBox
-    bb = arrow.get("BoundingBox", "")
-    if bb:
-        vals = [float(v) for v in bb.split()]
-        return vals[0], (vals[1]+vals[3])/2, vals[2], (vals[1]+vals[3])/2
-    return 450.0, 250.0, 550.0, 250.0
+    from .cdxml_utils import arrow_endpoints
+    return arrow_endpoints(arrow)
 
 
 

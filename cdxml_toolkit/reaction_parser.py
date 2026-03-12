@@ -232,6 +232,8 @@ _CONDITION_PATTERNS = [
     re.compile(r"^Ar\s*(atm)?$"),                           # argon atmosphere
     re.compile(r"^MW$", re.IGNORECASE),                     # microwave
     re.compile(r"^sealed\s+tube$", re.IGNORECASE),
+    re.compile(r"^-?\d+\s+to\s+-?\d+", re.IGNORECASE),     # temp range: "-78 to RT", "0 to 25"
+    re.compile(r"^-?\d+\s*(?:°|[\u00b0\ufffd])?\s*(?:C\s+)?to\s+(?:RT|r\.?t\.?|-?\d+)", re.IGNORECASE),
     re.compile(r"^\d+\.?\d*\s*equiv?\.?$", re.IGNORECASE),  # equivalents
     re.compile(r"^\d+\.?\d*\s*eq\.?$", re.IGNORECASE),
     re.compile(r"^\d+\s*M$"),                               # molarity: "2 M"
@@ -328,9 +330,10 @@ def _resolve_text_label(text: str,
     """Resolve a text label to canonical SMILES.
 
     Resolution chain (first success wins):
-      1. reagent_db name → SMILES
-      2. OPSIN (offline, IUPAC/systematic names)
-      3. PubChem (online, if use_network=True)
+      1. reagent_db name → SMILES  (curated dictionary)
+      2. condensed formula parser  (generative, offline)
+      3. OPSIN                     (offline, IUPAC/systematic names)
+      4. PubChem                   (online, if *use_network*)
 
     Returns canonical SMILES or None.
     """
@@ -359,7 +362,16 @@ def _resolve_text_label(text: str,
                 pass
             return smi
 
-    # 2. OPSIN (offline)
+    # 2. Condensed formula parser (generative, offline)
+    try:
+        from .condensed_formula import resolve_condensed_formula
+        smi = resolve_condensed_formula(clean)
+        if smi:
+            return smi
+    except (ImportError, Exception):
+        pass
+
+    # 3. OPSIN (offline)
     try:
         from .reactant_heuristic import _opsin_name_to_smiles
         smi = _opsin_name_to_smiles(clean)
@@ -368,7 +380,7 @@ def _resolve_text_label(text: str,
     except (ImportError, Exception):
         pass
 
-    # 3. PubChem (online)
+    # 4. PubChem (online)
     if use_network:
         try:
             from .cas_resolver import resolve_name_to_smiles
@@ -410,18 +422,8 @@ def _find_arrow(page: ET.Element) -> Optional[ET.Element]:
 
 def _arrow_endpoints(arrow: ET.Element) -> Tuple[float, float, float, float]:
     """Return (tail_x, tail_y, head_x, head_y) from an arrow element."""
-    head = arrow.get("Head3D", "")
-    tail = arrow.get("Tail3D", "")
-    if head and tail:
-        hp = [float(v) for v in head.split()]
-        tp = [float(v) for v in tail.split()]
-        return tp[0], tp[1], hp[0], hp[1]
-    # Fallback: BoundingBox
-    bb = arrow.get("BoundingBox", "")
-    if bb:
-        vals = [float(v) for v in bb.split()]
-        return vals[0], (vals[1] + vals[3]) / 2, vals[2], (vals[1] + vals[3]) / 2
-    return 450.0, 250.0, 550.0, 250.0
+    from .cdxml_utils import arrow_endpoints
+    return arrow_endpoints(arrow)
 
 
 def _fragment_centroid(frag: ET.Element) -> Tuple[float, float]:

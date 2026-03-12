@@ -237,6 +237,65 @@ def frag_to_smiles_resolved(frag_elem: ET.Element) -> Optional[str]:
         return frag_to_smiles(frag_elem)
 
 
+def frag_to_smiles_chemscript(frag_elem: ET.Element) -> Optional[str]:
+    """Convert a CDXML ``<fragment>`` to SMILES using ChemScript.
+
+    ChemScript (PerkinElmer ChemDraw .NET library) natively understands
+    ALL ChemDraw abbreviation groups (Nicknames, Fragments, generic groups)
+    and expands them to full structures.  This gives far better results than
+    :func:`frag_to_smiles_resolved` for fragments with complex or rare
+    abbreviations (NHTrs, PO(OH)₂, Bn, etc.).
+
+    Falls back to ``None`` if ChemScript is unavailable or fails.
+    Requires ChemDraw 16+ installed on Windows.
+    """
+    import copy
+    import tempfile
+    import os
+
+    try:
+        from .chemscript_bridge import ChemScriptBridge
+    except ImportError:
+        return None
+
+    # Wrap the fragment in a minimal CDXML document
+    frag_copy = copy.deepcopy(frag_elem)
+    wrapper = ET.Element("CDXML")
+    page_el = ET.SubElement(wrapper, "page")
+    page_el.append(frag_copy)
+
+    tmp_path = None
+    try:
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".cdxml", delete=False, mode="w", encoding="utf-8"
+        )
+        tmp.write('<?xml version="1.0" encoding="UTF-8" ?>')
+        tmp.write(ET.tostring(wrapper, encoding="unicode"))
+        tmp.close()
+        tmp_path = tmp.name
+
+        cs = ChemScriptBridge()
+        info = cs.get_info(tmp_path)
+        if info and info.get("ok"):
+            smi = info.get("smiles")
+            if smi:
+                return smi
+            # Reaction-type response — shouldn't happen for a single fragment
+            # but handle gracefully
+            reactants = info.get("reactants", [])
+            if reactants and reactants[0].get("smiles"):
+                return reactants[0]["smiles"]
+        return None
+    except Exception:
+        return None
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def frag_to_mw(frag_elem: ET.Element) -> Optional[float]:
     """Compute molecular weight from a CDXML <fragment>.
 

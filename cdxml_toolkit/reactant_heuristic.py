@@ -211,6 +211,82 @@ def _text_to_smiles(text_content: str) -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 _opsin_available: Optional[bool] = None
+_java_exe: Optional[str] = None
+
+
+def _find_java() -> Optional[str]:
+    """Find the Java executable for OPSIN.
+
+    Discovery order:
+      1. ``java`` on PATH (system-installed)
+      2. ``JAVA_HOME`` environment variable
+      3. Bundled JRE alongside test data (``CHEM_TEST_DATA`` env var)
+      4. Known default location for the project JRE
+
+    Returns the full path to the ``java`` (or ``java.exe``) binary,
+    or None if no JRE is found.
+    """
+    import shutil
+
+    # 1. Already on PATH?
+    java = shutil.which("java")
+    if java:
+        return java
+
+    # 2. JAVA_HOME env var
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        candidate = os.path.join(java_home, "bin", "java.exe")
+        if os.path.isfile(candidate):
+            return candidate
+        candidate = os.path.join(java_home, "bin", "java")
+        if os.path.isfile(candidate):
+            return candidate
+
+    # 3. Bundled JRE relative to CHEM_TEST_DATA
+    test_data = os.environ.get("CHEM_TEST_DATA")
+    if test_data:
+        # Look for any JRE directory inside CHEM_TEST_DATA
+        _jre = _scan_for_jre(test_data)
+        if _jre:
+            return _jre
+
+    # 4. Known default location (project-specific)
+    _known = os.path.expanduser(
+        os.path.join("~", "chem-test-data",
+                     "OpenJDK21U-jre_x64_windows_hotspot_21.0.10_7"))
+    if os.path.isdir(_known):
+        _jre = _scan_for_jre(_known)
+        if _jre:
+            return _jre
+
+    return None
+
+
+def _scan_for_jre(base_dir: str) -> Optional[str]:
+    """Scan a directory tree (1 level deep) for a JRE bin/java."""
+    for name in ("bin",):
+        candidate = os.path.join(base_dir, name, "java.exe")
+        if os.path.isfile(candidate):
+            return candidate
+        candidate = os.path.join(base_dir, name, "java")
+        if os.path.isfile(candidate):
+            return candidate
+
+    # Check one level of subdirectories (e.g. jdk-21.0.10+7-jre/bin/)
+    try:
+        for entry in os.listdir(base_dir):
+            subdir = os.path.join(base_dir, entry)
+            if os.path.isdir(subdir):
+                candidate = os.path.join(subdir, "bin", "java.exe")
+                if os.path.isfile(candidate):
+                    return candidate
+                candidate = os.path.join(subdir, "bin", "java")
+                if os.path.isfile(candidate):
+                    return candidate
+    except OSError:
+        pass
+    return None
 
 
 def _opsin_name_to_smiles(name: str) -> Optional[str]:
@@ -220,27 +296,39 @@ def _opsin_name_to_smiles(name: str) -> Optional[str]:
     (e.g. "cesium carbonate", "triethylamine", "sodium tert-butoxide").
     Fails on abbreviations (BINAP, Pd2dba3) and some organometallics.
 
-    Requires Java (JRE) on PATH and the py2opsin package.
+    Requires Java (JRE 8+) and the py2opsin package.  Java is
+    auto-discovered via PATH, JAVA_HOME, or known bundled locations.
     """
-    global _opsin_available
+    global _opsin_available, _java_exe
     if _opsin_available is False:
         return None
     try:
         import warnings
         from py2opsin import py2opsin
+
+        # Ensure Java is discoverable by py2opsin's subprocess call.
+        if _java_exe is None:
+            _java_exe = _find_java()
+        if _java_exe and _java_exe not in os.environ.get("PATH", ""):
+            # Add the JRE bin directory to PATH so py2opsin's
+            # subprocess.run(["java", ...]) can find it.
+            java_bin_dir = os.path.dirname(_java_exe)
+            os.environ["PATH"] = java_bin_dir + os.pathsep + os.environ.get("PATH", "")
+            java_home = os.path.dirname(java_bin_dir)
+            os.environ["JAVA_HOME"] = java_home
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             result = py2opsin(name)
         if result:
             _opsin_available = True
-            print(f"  OPSIN: '{name}' -> {result}", file=sys.stderr)
             return result
         _opsin_available = True
         return None
     except FileNotFoundError:
-        # Java not found
+        # Java not found even after discovery attempt
         if _opsin_available is None:
-            print("  [info] OPSIN unavailable (Java not on PATH)", file=sys.stderr)
+            print("  [info] OPSIN unavailable (Java not found)", file=sys.stderr)
         _opsin_available = False
         return None
     except ImportError:

@@ -989,5 +989,58 @@
         "role": "catalyst",
         "smiles": "C1=CSC(=C1)C(=O)[O-].[Cu+]",
         "aliases": ["copper(i) thiophene-2-carboxylate"]
+    },
+    "phb(oh)2": {
+        "display": "PhB(OH)2",
+        "role": "reagent",
+        "smiles": "OB(O)c1ccccc1",
+        "aliases": ["phenylboronic acid"]
+    },
+    "phmgbr": {
+        "display": "PhMgBr",
+        "role": "reagent",
+        "smiles": "[Mg](Br)c1ccccc1",
+        "aliases": ["phenylmagnesium bromide"]
+    },
+    "memgbr": {
+        "display": "MeMgBr",
+        "role": "reagent",
+        "smiles": "[Mg](Br)C",
+        "aliases": ["methylmagnesium bromide"]
+    },
+    "cl2choch3": {
+        "display": "Cl2CHOCH3",
+        "role": "reagent",
+        "smiles": "COC(Cl)Cl",
+        "aliases": ["dichloromethyl methyl ether", "rieche reagent"]
+    },
+    "bzcl": {
+        "display": "BzCl",
+        "role": "reagent",
+        "smiles": "O=C(Cl)c1ccccc1",
+        "aliases": ["benzoyl chloride"]
+    },
+    "mei": {
+        "display": "MeI",
+        "role": "reagent",
+        "smiles": "CI",
+        "aliases": ["methyl iodide", "iodomethane"]
+    },
+    "ag2o": {
+        "display": "Ag2O",
+        "role": "oxidant",
+        "smiles": "[Ag]O[Ag]",
+        "aliases": ["silver oxide", "silver(i) oxide"]
+    },
+    "piperidine": {
+        "display": "Piperidine",
+        "role": "base",
+        "smiles": "C1CCNCC1"
+    },
+    "nh4cl": {
+        "display": "NH4Cl",
+        "role": "reagent",
+        "smiles": "[NH4+].[Cl-]",
+        "aliases": ["ammonium chloride"]
     }
 }
