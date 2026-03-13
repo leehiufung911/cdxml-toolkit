@@ -1,4 +1,4 @@
-"""Scheme DSL — declarative text-based reaction scheme renderer.
+"""Render — declarative text-based reaction scheme renderer.
 
 Build publication-ready CDXML reaction schemes from YAML or compact text.
 The LLM specifies semantic content (structures, roles, conditions);

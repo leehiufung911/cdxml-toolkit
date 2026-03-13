@@ -18,7 +18,7 @@ CLI:
     python reaction_parser.py --input-dir path/ --experiment KL-7001-004
 
 Python API:
-    from cdxml_toolkit.reaction_parser import parse_reaction, ReactionDescriptor
+    from cdxml_toolkit.perception.reaction_parser import parse_reaction, ReactionDescriptor
     desc = parse_reaction(cdxml="scheme.cdxml", csv="exp.csv")
     desc.to_json("reaction.json")
 """
@@ -33,7 +33,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 from xml.etree import ElementTree as ET
 
-from .constants import MW_MATCH_TOLERANCE, MASS_TOLERANCE
+from ..constants import MW_MATCH_TOLERANCE, MASS_TOLERANCE
 
 # ---------------------------------------------------------------------------
 # Logging helper
@@ -256,7 +256,7 @@ def split_condition_text(text: str) -> List[str]:
 
     Returns a list of chemical name strings.
     """
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
     db = get_reagent_db()
 
     # Split on newlines first (scheme_polisher merges with \n)
@@ -337,7 +337,7 @@ def _resolve_text_label(text: str,
 
     Returns canonical SMILES or None.
     """
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
     db = get_reagent_db()
 
     # Normalize: strip equiv annotations, whitespace
@@ -364,7 +364,7 @@ def _resolve_text_label(text: str,
 
     # 2. Condensed formula parser (generative, offline)
     try:
-        from .condensed_formula import resolve_condensed_formula
+        from ..resolve.condensed_formula import resolve_condensed_formula
         smi = resolve_condensed_formula(clean)
         if smi:
             return smi
@@ -383,7 +383,7 @@ def _resolve_text_label(text: str,
     # 4. PubChem (online)
     if use_network:
         try:
-            from .cas_resolver import resolve_name_to_smiles
+            from ..resolve.cas_resolver import resolve_name_to_smiles
             smi = resolve_name_to_smiles(clean)
             if smi:
                 return smi
@@ -422,7 +422,7 @@ def _find_arrow(page: ET.Element) -> Optional[ET.Element]:
 
 def _arrow_endpoints(arrow: ET.Element) -> Tuple[float, float, float, float]:
     """Return (tail_x, tail_y, head_x, head_y) from an arrow element."""
-    from .cdxml_utils import arrow_endpoints
+    from ..cdxml_utils import arrow_endpoints
     return arrow_endpoints(arrow)
 
 
@@ -502,7 +502,7 @@ def _extract_geometry(frag_elem) -> Optional[Dict[str, Any]]:
                 atom_d["label"] = label
                 # Look up the SMILES for this abbreviation
                 try:
-                    from .superatom_table import lookup_smiles
+                    from ..resolve.superatom_table import lookup_smiles
                     lsmi = lookup_smiles(label)
                     if lsmi:
                         atom_d["label_smiles"] = lsmi
@@ -594,7 +594,7 @@ def _extract_from_cdxml(cdxml_path: str,
     NOT from ``<step>`` attributes.  Conditions are non-chemical tokens
     (temperatures, times, atmospheres) from text labels near the arrow.
     """
-    from .cdxml_utils import parse_cdxml
+    from ..cdxml_utils import parse_cdxml
 
     tree = parse_cdxml(cdxml_path)
     root = tree.getroot()
@@ -637,9 +637,9 @@ def _extract_from_cdxml(cdxml_path: str,
     _frag_to_smiles_resolved = None
     _frag_to_smiles_plain = None
     try:
-        from .rdkit_utils import frag_to_smiles_resolved as _frag_to_smiles_resolved
-        from .rdkit_utils import frag_to_smiles as _frag_to_smiles_plain
-        from .rdkit_utils import frag_to_mw as _frag_to_mw
+        from ..rdkit_utils import frag_to_smiles_resolved as _frag_to_smiles_resolved
+        from ..rdkit_utils import frag_to_smiles as _frag_to_smiles_plain
+        from ..rdkit_utils import frag_to_mw as _frag_to_mw
     except ImportError:
         _frag_to_mw = None
 
@@ -758,8 +758,8 @@ def _try_chemscript_smiles(frag_elem: ET.Element,
     and calls ChemScript to export SMILES.
     """
     try:
-        from .chemscript_bridge import ChemScriptBridge
-        from .constants import CDXML_MINIMAL_HEADER, CDXML_FOOTER
+        from ..chemdraw.chemscript_bridge import ChemScriptBridge
+        from ..constants import CDXML_MINIMAL_HEADER, CDXML_FOOTER
     except ImportError:
         return None
 
@@ -812,7 +812,7 @@ def _extract_from_rxn(rxn_path: str) -> Tuple[List[SpeciesDescriptor], List[str]
 
     # Tier 1: ChemScript
     try:
-        from .chemscript_bridge import ChemScriptBridge
+        from ..chemdraw.chemscript_bridge import ChemScriptBridge
         cs = ChemScriptBridge()
         result = cs.load_reaction(rxn_path)
         if result and result.get("ok"):
@@ -926,7 +926,7 @@ def _match_csv_data(species: List[SpeciesDescriptor],
         warnings.append(f"Could not parse CSV: {csv_path}")
         return species, warnings, None
 
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
     db = get_reagent_db()
 
     # Build match tracking
@@ -1281,7 +1281,7 @@ def _identify_sm_dp(species: List[SpeciesDescriptor]) -> None:
 
 def _apply_display_names(species: List[SpeciesDescriptor]) -> None:
     """Apply display name precedence rules to all species."""
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
     db = get_reagent_db()
 
     for sp in species:
@@ -1334,7 +1334,7 @@ def _apply_display_names(species: List[SpeciesDescriptor]) -> None:
 def _detect_solvents(species: List[SpeciesDescriptor],
                      exp_data: Optional[Any] = None) -> None:
     """Mark solvent species from CSV SOLVENT section and reagent_db role."""
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
     db = get_reagent_db()
 
     # From reagent_db role_detail
@@ -1897,7 +1897,7 @@ def _check_rdkit() -> bool:
 
 def _check_chemscript() -> bool:
     try:
-        from .chemscript_bridge import ChemScriptBridge  # noqa: F401
+        from ..chemdraw.chemscript_bridge import ChemScriptBridge  # noqa: F401
         return True
     except ImportError:
         return False

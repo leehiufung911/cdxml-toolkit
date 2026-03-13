@@ -5,7 +5,7 @@ import os
 import pytest
 import tempfile
 
-from cdxml_toolkit.scheme_reader import (
+from cdxml_toolkit.perception.scheme_reader import (
     read_scheme,
     SchemeDescription,
     SpeciesRecord,
@@ -564,19 +564,19 @@ class TestSegmenter:
     """Tests for scheme_segmenter module."""
 
     def test_import(self):
-        from cdxml_toolkit.scheme_segmenter import (
+        from cdxml_toolkit.perception.scheme_segmenter import (
             segment_scheme, classify_scheme_complexity, SchemeSegment,
         )
 
     def test_oleobject12_segments_into_5(self):
-        from cdxml_toolkit.scheme_segmenter import segment_scheme
+        from cdxml_toolkit.perception.scheme_segmenter import segment_scheme
         r = segment_scheme(_oleobj("oleObject12.cdxml"))
         assert r.num_segments == 5
         assert r.is_multi_panel
         assert not r.wrap_repeat_detected
 
     def test_oleobject12_segments_are_disjoint(self):
-        from cdxml_toolkit.scheme_segmenter import segment_scheme
+        from cdxml_toolkit.perception.scheme_segmenter import segment_scheme
         r = segment_scheme(_oleobj("oleObject12.cdxml"))
         all_species = []
         for seg in r.segments:
@@ -585,26 +585,26 @@ class TestSegmenter:
         assert len(all_species) == len(set(all_species))
 
     def test_wrap_repeat_not_segmented(self):
-        from cdxml_toolkit.scheme_segmenter import segment_scheme
+        from cdxml_toolkit.perception.scheme_segmenter import segment_scheme
         r = segment_scheme(_showcase("08_wrap_repeat_4step.cdxml"))
         assert r.num_segments == 1
         assert not r.is_multi_panel
         assert r.wrap_repeat_detected
 
     def test_single_scheme_not_segmented(self):
-        from cdxml_toolkit.scheme_segmenter import segment_scheme
+        from cdxml_toolkit.perception.scheme_segmenter import segment_scheme
         r = segment_scheme(_showcase("01_buchwald_linear.cdxml"))
         assert r.num_segments == 1
         assert not r.is_multi_panel
 
     def test_classify_simple(self):
-        from cdxml_toolkit.scheme_segmenter import classify_scheme_complexity
+        from cdxml_toolkit.perception.scheme_segmenter import classify_scheme_complexity
         tier = classify_scheme_complexity(
             _showcase("01_buchwald_linear.cdxml"))
         assert tier == "simple"
 
     def test_classify_complex(self):
-        from cdxml_toolkit.scheme_segmenter import classify_scheme_complexity
+        from cdxml_toolkit.perception.scheme_segmenter import classify_scheme_complexity
         tier = classify_scheme_complexity(_oleobj("oleObject12.cdxml"))
         assert tier == "complex"
 
@@ -676,7 +676,7 @@ class TestNameDecomposerRecursion:
         Recursive decomposition should produce quinoline-rooted alternatives,
         not just morpholine-rooted ones.
         """
-        from cdxml_toolkit.name_decomposer import decompose_name
+        from cdxml_toolkit.naming.name_decomposer import decompose_name
 
         smiles = "OC(c1ccccc1)c1c(N2CCOCC2)nc3ccccc3c1-c1ccccc1"
         result = decompose_name(smiles, max_depth=1)

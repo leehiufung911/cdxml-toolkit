@@ -15,4 +15,4 @@ __version__ = "0.5.0"
 from .constants import ACS_BOND_LENGTH, ACS_CHAIN_ANGLE, ACS_STYLE
 from .cdxml_utils import parse_cdxml, write_cdxml, fragment_bbox
 from .text_formatting import build_formatted_s_xml
-from .reagent_db import get_reagent_db
+from .resolve.reagent_db import get_reagent_db

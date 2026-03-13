@@ -13,7 +13,7 @@ Usage:
     python cdx_converter.py input.cdxml [-o output.cdx] [--method com|pycdxml|obabel]
 
 Python API:
-    from cdxml_toolkit.cdx_converter import convert_cdx_to_cdxml, convert_file
+    from cdxml_toolkit.chemdraw.cdx_converter import convert_cdx_to_cdxml, convert_file
     cdxml_str = convert_cdx_to_cdxml(cdx_bytes)
     convert_file("input.cdx", "output.cdxml")
 """

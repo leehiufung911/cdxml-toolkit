@@ -14,7 +14,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not _HAS_RDKIT, reason="RDKit not available")
 
-from cdxml_toolkit.dsl.scheme_yaml_writer import (
+from cdxml_toolkit.render.scheme_yaml_writer import (
     _canonicalize,
     _classify_pair,
     _build_merge_plan,
@@ -28,8 +28,8 @@ from cdxml_toolkit.dsl.scheme_yaml_writer import (
     write_scheme_yaml,
     ReactionSummary,
 )
-from cdxml_toolkit.dsl.schema import RunArrowEntry
-from cdxml_toolkit.dsl.parser import parse_yaml
+from cdxml_toolkit.render.schema import RunArrowEntry
+from cdxml_toolkit.render.parser import parse_yaml
 
 
 # ---------------------------------------------------------------------------

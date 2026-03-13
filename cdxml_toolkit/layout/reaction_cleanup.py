@@ -32,7 +32,7 @@ import sys
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
 
-from .constants import (
+from ..constants import (
     ACS_BOND_LENGTH,
     LAYOUT_ABOVE_GAP,
     LAYOUT_BELOW_GAP,
@@ -41,7 +41,7 @@ from .constants import (
     LAYOUT_INTER_FRAGMENT_GAP,
     LAYOUT_INTER_GAP_BONDS,
 )
-from .cdxml_utils import (
+from ..cdxml_utils import (
     fragment_bbox,
     fragment_bottom_has_hanging_label,
     parse_cdxml,
@@ -111,7 +111,7 @@ def _get_arrow(page: ET.Element, step: ET.Element,
 
 def _arrow_endpoints(arrow: ET.Element) -> Tuple[float, float, float, float]:
     """Return (tail_x, tail_y, head_x, head_y) from arrow element."""
-    from .cdxml_utils import arrow_endpoints
+    from ..cdxml_utils import arrow_endpoints
     return arrow_endpoints(arrow)
 
 
@@ -991,7 +991,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 def _render(cdxml_path: str):
     """Render a CDXML to PNG using cdxml_to_image.py."""
     try:
-        from .cdxml_to_image import cdxml_to_image
+        from ..chemdraw.cdxml_to_image import cdxml_to_image
         png_path = cdxml_to_image(cdxml_path)
         print(f"  Rendered: {png_path}")
     except Exception as e:

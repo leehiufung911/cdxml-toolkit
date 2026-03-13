@@ -69,7 +69,7 @@ class TestReactionCleanup:
 
     def test_default_approach_runs(self):
         out = os.path.join(self.tmp, "cleaned.cdxml")
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reaction_cleanup", self.cdxml, "--output", out])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.reaction_cleanup", self.cdxml, "--output", out])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         _assert_valid_cdxml(out)
 
@@ -78,14 +78,14 @@ class TestReactionCleanup:
         import shutil
         tmp_cdxml = os.path.join(self.tmp, "input.cdxml")
         shutil.copy2(self.cdxml, tmp_cdxml)
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reaction_cleanup", tmp_cdxml, "--all"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.reaction_cleanup", tmp_cdxml, "--all"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         # --all produces one file per approach next to the input
         outputs = glob.glob(os.path.join(self.tmp, "*cleanup*.cdxml"))
         assert len(outputs) >= 1
 
     def test_json_output(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reaction_cleanup", self.cdxml, "--json"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.reaction_cleanup", self.cdxml, "--json"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         data = json.loads(r.stdout)
         assert isinstance(data, dict)
@@ -139,7 +139,7 @@ class TestRdfParser:
 
     def test_parses_rdf_to_json(self, tmp_path):
         out = os.path.join(tmp_path, "parsed.json")
-        r = _run([PYTHON, "-m", "cdxml_toolkit.rdf_parser", self.rdf, "--output", out, "--pretty"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.rdf_parser", self.rdf, "--output", out, "--pretty"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert os.path.isfile(out)
 
@@ -149,7 +149,7 @@ class TestRdfParser:
         assert "reactants" in data or "reactions" in data
 
     def test_stdout_output(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.rdf_parser", self.rdf])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.rdf_parser", self.rdf])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         data = json.loads(r.stdout)
         assert "reactants" in data or "reactions" in data
@@ -245,7 +245,7 @@ class TestReagentDbSmoke:
     """Smoke test: reagent_db loads without error."""
 
     def test_import_and_load(self):
-        from cdxml_toolkit.reagent_db import get_reagent_db
+        from cdxml_toolkit.resolve.reagent_db import get_reagent_db
 
         db = get_reagent_db()
         assert db is not None

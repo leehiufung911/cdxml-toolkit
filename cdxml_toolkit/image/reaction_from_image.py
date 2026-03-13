@@ -70,9 +70,9 @@ from xml.sax.saxutils import escape as xml_escape
 # Shared reagent database
 # ---------------------------------------------------------------------------
 
-from .reagent_db import get_reagent_db
-from .text_formatting import needs_subscript, build_formatted_s_xml
-from .constants import (
+from ..resolve.reagent_db import get_reagent_db
+from ..text_formatting import needs_subscript, build_formatted_s_xml
+from ..constants import (
     ACS_BOND_LENGTH, EXPAND_SCALE_BOND,
     CDXML_HEADER, CDXML_FOOTER,
     ACS_LABEL_FONT, ACS_LABEL_SIZE, ACS_LABEL_FACE,
@@ -255,7 +255,7 @@ def _resolve_condition_to_fragment(
     # --- 2. PubChem name → SMILES → ChemScript smiles_to_cdxml ---
     if result is None:
         try:
-            from .cas_resolver import resolve_name_to_smiles
+            from ..resolve.cas_resolver import resolve_name_to_smiles
             smiles = resolve_name_to_smiles(canonical)
             if smiles:
                 log(f"  '{canonical}' → PubChem SMILES: {smiles[:60]}")

@@ -16,11 +16,11 @@ This module provides:
 
 Usage::
 
-    from cdxml_toolkit.scheme_segmenter import segment_scheme
+    from cdxml_toolkit.perception.scheme_segmenter import segment_scheme
     segments = segment_scheme("oleObject12.cdxml")
     # => 5 SchemeSegment objects with disjoint species
 
-    from cdxml_toolkit.scheme_segmenter import classify_scheme_complexity
+    from cdxml_toolkit.perception.scheme_segmenter import classify_scheme_complexity
     tier = classify_scheme_complexity("oleObject12.cdxml")
     # => "complex"
 """
@@ -188,7 +188,7 @@ def _extract_smiles_for_fragments(fragment_ids: Set[str],
     """
     result: Dict[str, str] = {}
     try:
-        from .rdkit_utils import frag_to_smiles_resolved
+        from ..rdkit_utils import frag_to_smiles_resolved
     except ImportError:
         return result
 
@@ -322,7 +322,7 @@ def segment_scheme(cdxml_path: str,
         if verbose:
             print(f"  [segmenter] {msg}", file=sys.stderr)
 
-    from .cdxml_utils import parse_cdxml, build_id_map
+    from ..cdxml_utils import parse_cdxml, build_id_map
 
     result = SegmentationResult(source_file=os.path.abspath(cdxml_path))
 
@@ -514,7 +514,7 @@ def classify_scheme_complexity(cdxml_path: str) -> str:
         ``"complex"`` — 3+ scheme elements OR >8 arrows OR >30 fragments OR
         multi-panel (Mode C)
     """
-    from .cdxml_utils import parse_cdxml, build_id_map
+    from ..cdxml_utils import parse_cdxml, build_id_map
 
     tree = parse_cdxml(cdxml_path)
     root = tree.getroot()

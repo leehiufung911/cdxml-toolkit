@@ -478,7 +478,7 @@ def resolve_cas_numbers(reaction: Reaction) -> None:
     Populates name, MW, formula, SMILES for reagents/catalysts/solvents.
     """
     try:
-        from .cas_resolver import resolve_cas
+        from ..resolve.cas_resolver import resolve_cas
     except ImportError:
         print("Warning: cas_resolver.py not found. Skipping CAS resolution.",
               file=sys.stderr)

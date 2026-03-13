@@ -22,7 +22,7 @@ Key design decisions:
     the ratio of nearest to second-nearest arrow distance.
 
 API:
-    from cdxml_toolkit.spatial_assignment import (
+    from cdxml_toolkit.perception.spatial_assignment import (
         build_arrow_vectors, classify_layout, assign_elements,
     )
     arrows = build_arrow_vectors(page_element)
@@ -38,7 +38,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 from xml.etree import ElementTree as ET
 
-from .constants import ACS_BOND_LENGTH
+from ..constants import ACS_BOND_LENGTH
 
 
 # ---------------------------------------------------------------------------
@@ -210,7 +210,7 @@ def _classify_arrow_type(arrow: ET.Element) -> str:
 
 def build_arrow_vector(arrow: ET.Element) -> ArrowVector:
     """Build an :class:`ArrowVector` from a CDXML ``<arrow>`` or ``<graphic>`` element."""
-    from .cdxml_utils import arrow_endpoints
+    from ..cdxml_utils import arrow_endpoints
 
     tx, ty, hx, hy = arrow_endpoints(arrow)
 
@@ -273,7 +273,7 @@ def build_arrow_vectors(page: ET.Element) -> List[ArrowVector]:
 
 def collect_fragments(page: ET.Element) -> List[FragmentInfo]:
     """Collect all fragments on the page with spatial metadata."""
-    from .cdxml_utils import fragment_bbox, fragment_centroid
+    from ..cdxml_utils import fragment_bbox, fragment_centroid
 
     frags: List[FragmentInfo] = []
     for el in page:

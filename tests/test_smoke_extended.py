@@ -65,7 +65,7 @@ class TestCasResolver:
     @pytest.mark.network
     def test_resolves_aspirin_cas(self):
         """Resolve aspirin (CAS 50-78-2)."""
-        r = _run([PYTHON, "-m", "cdxml_toolkit.cas_resolver", "50-78-2", "--pretty"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.resolve.cas_resolver", "50-78-2", "--pretty"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         data = json.loads(r.stdout)
         assert data["cas"] == "50-78-2"
@@ -77,7 +77,7 @@ class TestCasResolver:
     def test_batch_resolution(self):
         """Resolve two CAS numbers: aspirin (50-78-2) and caffeine (58-08-2)."""
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.cas_resolver",
+            PYTHON, "-m", "cdxml_toolkit.resolve.cas_resolver",
             "50-78-2", "58-08-2",
             "--pretty",
         ])
@@ -93,12 +93,12 @@ class TestCasResolver:
     def test_invalid_cas_returns_error(self):
         """Invalid CAS check digit should exit with code 1."""
         # 999-99-9 has wrong check digit (should be 5, not 9)
-        r = _run([PYTHON, "-m", "cdxml_toolkit.cas_resolver", "999-99-9"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.resolve.cas_resolver", "999-99-9"])
         assert r.returncode == 1
 
     def test_no_args_exits_with_error(self):
         """Running with no CAS numbers should show usage error (no network needed)."""
-        r = _run([PYTHON, "-m", "cdxml_toolkit.cas_resolver"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.resolve.cas_resolver"])
         assert r.returncode != 0
 
 
@@ -129,7 +129,7 @@ class TestSchemeAligner:
     def test_aligns_and_produces_valid_cdxml(self, tmp_path):
         out = os.path.join(str(tmp_path), "aligned.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_aligner",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_aligner",
             self.cdxml,
             "-o", out,
         ])
@@ -142,7 +142,7 @@ class TestSchemeAligner:
         assert len(frags) >= 2, "aligned output should contain multiple fragments"
 
     def test_stdout_reports_alignment_progress(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.scheme_aligner", self.cdxml])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.scheme_aligner", self.cdxml])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         text = r.stdout
         # Should report fragments and step info
@@ -178,7 +178,7 @@ class TestOleExtractor:
     def test_extracts_from_pptx(self, tmp_path):
         out_dir = os.path.join(str(tmp_path), "extracted")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.ole_extractor",
+            PYTHON, "-m", "cdxml_toolkit.office.ole_extractor",
             self.pptx,
             "-o", out_dir,
             "--format", "cdx",  # CDX only — avoids COM dependency for conversion
@@ -189,7 +189,7 @@ class TestOleExtractor:
 
     def test_output_summary_mentions_chemdraw(self):
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.ole_extractor",
+            PYTHON, "-m", "cdxml_toolkit.office.ole_extractor",
             self.pptx,
             "--format", "cdx",
         ])
@@ -202,7 +202,7 @@ class TestOleExtractor:
 
     def test_missing_file_returns_error(self):
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.ole_extractor",
+            PYTHON, "-m", "cdxml_toolkit.office.ole_extractor",
             "nonexistent_file.pptx",
         ])
         assert r.returncode != 0
@@ -223,14 +223,14 @@ class TestElnEnrichment:
 
     def test_module_imports(self):
         """Top-level imports (cdxml_utils, constants, text_formatting) work."""
-        import cdxml_toolkit.eln_enrichment as eln_enrichment
+        import cdxml_toolkit.layout.eln_enrichment as eln_enrichment
         assert hasattr(eln_enrichment, "match_csv_to_scheme")
         assert hasattr(eln_enrichment, "enrich_phase_a")
         assert hasattr(eln_enrichment, "enrich_phase_b")
 
     def test_data_structures_instantiate(self):
         """MatchedReagent and EnrichmentData dataclasses work."""
-        from cdxml_toolkit.eln_enrichment import MatchedReagent, EnrichmentData
+        from cdxml_toolkit.layout.eln_enrichment import MatchedReagent, EnrichmentData
 
         mr = MatchedReagent(
             csv_name="Cs2CO3",
@@ -263,7 +263,7 @@ class TestElnEnrichment:
         if not os.path.isfile(cdxml_path):
             pytest.skip("KL-CC-001-refactor-test.cdxml not found")
 
-        from cdxml_toolkit.eln_enrichment import match_csv_to_scheme
+        from cdxml_toolkit.layout.eln_enrichment import match_csv_to_scheme
 
         tree = ET.parse(cdxml_path)
         root = tree.getroot()
@@ -289,18 +289,18 @@ class TestReactantHeuristic:
     """
 
     def test_help_exits_zero(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reactant_heuristic", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.reactant_heuristic", "--help"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert "cdxml" in r.stdout, "help should mention cdxml subcommand"
         assert "smiles" in r.stdout, "help should mention smiles subcommand"
 
     def test_cdxml_help_exits_zero(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reactant_heuristic", "cdxml", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.reactant_heuristic", "cdxml", "--help"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert "--input" in r.stdout or "-i" in r.stdout
 
     def test_smiles_help_exits_zero(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reactant_heuristic", "smiles", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.reactant_heuristic", "smiles", "--help"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert "--reagents" in r.stdout
         assert "--product" in r.stdout
@@ -309,7 +309,7 @@ class TestReactantHeuristic:
     def test_smiles_mode_classifies_reagents(self):
         """Classify cyclohexanol + benzoic acid → ester."""
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reactant_heuristic", "smiles",
+            PYTHON, "-m", "cdxml_toolkit.perception.reactant_heuristic", "smiles",
             "--reagents", "OC1CCCCC1", "OC(=O)c1ccccc1",
             "--product", "O=C(c1ccccc1)OC1CCCCC1",
             "--names", "cyclohexanol", "benzoic acid",
@@ -333,7 +333,7 @@ class TestReactantHeuristic:
             pytest.skip("Buchwald-output scheme.cdxml not found")
 
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reactant_heuristic", "cdxml",
+            PYTHON, "-m", "cdxml_toolkit.perception.reactant_heuristic", "cdxml",
             "-i", cdxml,
             "--pretty",
         ])
@@ -358,7 +358,7 @@ class TestSchemeMerger:
         TEST_DATA, "KL-7001-004-with-009-scheme.cdxml")
 
     def test_help(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.scheme_merger", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger", "--help"])
         assert r.returncode == 0
         assert "--mode" in r.stdout
 
@@ -366,7 +366,7 @@ class TestSchemeMerger:
         """Import and parse the reference file via library API."""
         if not os.path.isfile(self.REF_FILE):
             pytest.skip("reference CDXML not found")
-        from cdxml_toolkit.scheme_merger import parse_scheme
+        from cdxml_toolkit.layout.scheme_merger import parse_scheme
         ps = parse_scheme(self.REF_FILE)
         assert len(ps.fragments) == 3
         assert len(ps.run_arrows) == 2
@@ -379,7 +379,7 @@ class TestSchemeMerger:
             pytest.skip("reference CDXML not found")
         out = str(tmp_path / "merged.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_merger", "--mode", "parallel",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger", "--mode", "parallel",
             self.REF_FILE, self.REF_FILE,
             "-o", out, "-v",
         ])
@@ -400,7 +400,7 @@ class TestSchemeMerger:
             pytest.skip("reference CDXML not found")
         out = str(tmp_path / "merged-noeq.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_merger", "--mode", "parallel",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger", "--mode", "parallel",
             self.REF_FILE, self.REF_FILE,
             "-o", out, "--no-equiv",
         ])
@@ -422,7 +422,7 @@ class TestSchemeMerger:
             pytest.skip("reference CDXML not found")
         out = str(tmp_path / "merged-range.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_merger", "--mode", "parallel",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger", "--mode", "parallel",
             self.REF_FILE, self.REF_FILE,
             "-o", out, "--equiv-range",
         ])
@@ -434,7 +434,7 @@ class TestSchemeMerger:
             pytest.skip("reference CDXML not found")
         out = str(tmp_path / "merged-legacy.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_merger", "--parallel",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger", "--parallel",
             self.REF_FILE, self.REF_FILE,
             "-o", out,
         ])
@@ -448,7 +448,7 @@ class TestSchemeMerger:
             pytest.skip("reference CDXML not found")
         out = str(tmp_path / "auto-merged.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_merger",
+            PYTHON, "-m", "cdxml_toolkit.layout.scheme_merger",
             self.REF_FILE, self.REF_FILE,
             "-o", out, "-v",
         ])
@@ -464,7 +464,7 @@ class TestSchemeMerger:
         """classify_pair correctly identifies parallel schemes."""
         if not os.path.isfile(self.REF_FILE):
             pytest.skip("reference CDXML not found")
-        from cdxml_toolkit.scheme_merger import parse_scheme, classify_pair
+        from cdxml_toolkit.layout.scheme_merger import parse_scheme, classify_pair
         ps = parse_scheme(self.REF_FILE)
         assert classify_pair(ps, ps) == "parallel"
 
@@ -472,7 +472,7 @@ class TestSchemeMerger:
         """auto_detect produces valid MergePlan for identical inputs."""
         if not os.path.isfile(self.REF_FILE):
             pytest.skip("reference CDXML not found")
-        from cdxml_toolkit.scheme_merger import parse_scheme, auto_detect
+        from cdxml_toolkit.layout.scheme_merger import parse_scheme, auto_detect
         ps = parse_scheme(self.REF_FILE)
         plan = auto_detect([ps, ps])
         assert len(plan.parallel_groups) == 1
@@ -483,7 +483,7 @@ class TestSchemeMerger:
         """parallel_merge with strict=True rejects different reactions."""
         if not os.path.isfile(self.REF_FILE):
             pytest.skip("reference CDXML not found")
-        from cdxml_toolkit.scheme_merger import parse_scheme, parallel_merge, ParsedScheme
+        from cdxml_toolkit.layout.scheme_merger import parse_scheme, parallel_merge, ParsedScheme
         import copy
         ps1 = parse_scheme(self.REF_FILE)
         # Create a modified copy with different product SMILES
@@ -517,7 +517,7 @@ class TestReactionParser:
             pytest.skip("KL-CC-001.cdxml not found")
 
     def test_help_exits_zero(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.reaction_parser", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser", "--help"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert "--csv" in r.stdout
         assert "--rxn" in r.stdout
@@ -527,7 +527,7 @@ class TestReactionParser:
         """Parse CDXML only — verify JSON output structure."""
         out = os.path.join(str(tmp_path), "reaction.json")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "-o", out,
             "--pretty",
@@ -554,7 +554,7 @@ class TestReactionParser:
             pytest.skip("KL-CC-001.csv not found")
         out = os.path.join(str(tmp_path), "reaction.json")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "--csv", self.CSV_FILE,
             "-o", out,
@@ -580,7 +580,7 @@ class TestReactionParser:
             pytest.skip("KL-CC-001.rxn not found")
         out = os.path.join(str(tmp_path), "reaction.json")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "--csv", self.CSV_FILE,
             "--rxn", self.RXN_FILE,
@@ -604,7 +604,7 @@ class TestReactionParser:
         """Verify JSON file is well-formed and contains metadata."""
         out = os.path.join(str(tmp_path), "reaction.json")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "-o", out,
             "--no-rxnmapper", "--no-rxn-insight", "--no-network",
@@ -623,7 +623,7 @@ class TestReactionParser:
     def test_stdout_output_when_no_output_flag(self):
         """Without -o, JSON should go to stdout."""
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "--no-rxnmapper", "--no-rxn-insight", "--no-network",
         ])
@@ -634,7 +634,7 @@ class TestReactionParser:
     def test_missing_file_returns_error(self):
         """Nonexistent input file should fail gracefully."""
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             "nonexistent_file.cdxml",
         ])
         assert r.returncode != 0
@@ -644,7 +644,7 @@ class TestReactionParser:
         """Species with SMILES should have computed masses and adducts."""
         out = os.path.join(str(tmp_path), "reaction.json")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "-o", out,
             "--pretty",
@@ -694,7 +694,7 @@ class TestSchemeMaker:
         """Helper: run reaction_parser to create input JSON."""
         out = os.path.join(str(tmp_path), "reaction.json")
         args = [
-            PYTHON, "-m", "cdxml_toolkit.reaction_parser",
+            PYTHON, "-m", "cdxml_toolkit.perception.reaction_parser",
             self.CDXML_FILE,
             "-o", out, "--pretty",
             "--no-rxnmapper", "--no-rxn-insight", "--no-network",
@@ -706,7 +706,7 @@ class TestSchemeMaker:
         return out
 
     def test_help_exits_zero(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.scheme_maker", "--help"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.render.scheme_maker", "--help"])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         assert "--approach" in r.stdout
         assert "--align-mode" in r.stdout
@@ -717,7 +717,7 @@ class TestSchemeMaker:
         json_path = self._make_json(tmp_path)
         out = os.path.join(str(tmp_path), "scheme.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path, "-o", out,
             "--align-mode", "none",
         ])
@@ -729,7 +729,7 @@ class TestSchemeMaker:
         json_path = self._make_json(tmp_path)
         out = os.path.join(str(tmp_path), "scheme.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path, "-o", out,
             "--align-mode", "none",
         ])
@@ -744,7 +744,7 @@ class TestSchemeMaker:
         json_path = self._make_json(tmp_path)
         out = os.path.join(str(tmp_path), "scheme.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path, "-o", out,
             "--align-mode", "none",
         ])
@@ -759,7 +759,7 @@ class TestSchemeMaker:
         json_path = self._make_json(tmp_path, use_csv=True)
         out = os.path.join(str(tmp_path), "scheme.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path, "-o", out,
             "--align-mode", "none",
         ])
@@ -777,7 +777,7 @@ class TestSchemeMaker:
         json_path = self._make_json(tmp_path)
         out = os.path.join(str(tmp_path), "scheme.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path, "-o", out,
             "--align-mode", "none", "--no-run-arrow",
         ])
@@ -786,14 +786,14 @@ class TestSchemeMaker:
 
     def test_missing_file_returns_error(self):
         """Nonexistent input file should fail gracefully."""
-        r = _run([PYTHON, "-m", "cdxml_toolkit.scheme_maker", "nonexistent.json"])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.render.scheme_maker", "nonexistent.json"])
         assert r.returncode != 0
 
     def test_default_output_path(self, tmp_path):
         """Without -o, output should be {stem}-scheme.cdxml."""
         json_path = self._make_json(tmp_path)
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.scheme_maker",
+            PYTHON, "-m", "cdxml_toolkit.render.scheme_maker",
             json_path,
             "--align-mode", "none",
         ])

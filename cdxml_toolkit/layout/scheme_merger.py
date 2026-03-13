@@ -30,7 +30,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from .cdxml_utils import (
+from ..cdxml_utils import (
     fragment_bbox,
     fragment_bbox_with_label_extension,
     fragment_bottom_has_hanging_label,
@@ -38,8 +38,8 @@ from .cdxml_utils import (
     write_cdxml,
     recompute_text_bbox,
 )
-from .rdkit_utils import frag_to_smiles, frag_to_mw
-from .constants import (
+from ..rdkit_utils import frag_to_smiles, frag_to_mw
+from ..constants import (
     ACS_BOND_LENGTH,
     LAYOUT_ABOVE_GAP,
     LAYOUT_BELOW_GAP,
@@ -2082,7 +2082,7 @@ def _alignment_cascade(schemes: List[ParsedScheme],
 def _write_temp_fragment_cdxml(frag: ET.Element,
                                source_root: ET.Element) -> str:
     """Write a single fragment to a temporary CDXML file for use as alignment ref."""
-    from .constants import CDXML_MINIMAL_HEADER, CDXML_FOOTER
+    from ..constants import CDXML_MINIMAL_HEADER, CDXML_FOOTER
 
     frag_copy = copy.deepcopy(frag)
     # Wrap in minimal CDXML

@@ -55,14 +55,14 @@ from xml.etree import ElementTree as ET
 # Shared reagent database
 # ---------------------------------------------------------------------------
 
-from .reagent_db import get_reagent_db
+from ..resolve.reagent_db import get_reagent_db
 
 
 # ---------------------------------------------------------------------------
 # Text formatting: subscripts + italic prefixes (from text_formatting.py)
 # ---------------------------------------------------------------------------
 
-from .text_formatting import (
+from ..text_formatting import (
     build_formatted_s_xml as _build_formatted_s_xml,  # Re-exported for eln_enrichment.py backward compat
     needs_subscript as _needs_subscript,
     split_italic_prefix as _split_italic_prefix,
@@ -106,7 +106,7 @@ def _fragment_bbox_center(frag: ET.Element) -> Tuple[float, float]:
 
     Delegates to cdxml_utils.fragment_centroid(); falls back to (500, 250).
     """
-    from .cdxml_utils import fragment_centroid
+    from ..cdxml_utils import fragment_centroid
     result = fragment_centroid(frag)
     if result is not None:
         return result
@@ -355,7 +355,7 @@ def _resolve_name_to_fragment(
 
     Returns (frag_xml, xmin, ymin, xmax, ymax) or None.
     """
-    from .reaction_from_image import (
+    from ..image.reaction_from_image import (
         _extract_fragment_from_cdxml, _measure_fragment_xml,
     )
 
@@ -389,7 +389,7 @@ def _resolve_name_to_fragment(
 
     # 3. PubChem name → SMILES → ChemScript
     try:
-        from .cas_resolver import resolve_name_to_smiles
+        from ..resolve.cas_resolver import resolve_name_to_smiles
         pub_smiles = resolve_name_to_smiles(canonical)
         if pub_smiles:
             log(f"    '{canonical}' → PubChem SMILES: {pub_smiles[:60]}")
@@ -436,7 +436,7 @@ def polish_scheme(
 
     # --- Step 1: Run reactant_heuristic classification ---
     log("Running reactant_heuristic classification...")
-    from .reactant_heuristic import classify_from_cdxml
+    from ..perception.reactant_heuristic import classify_from_cdxml
 
     classification = classify_from_cdxml(cdxml_path,
                                           use_rxnmapper=use_rxnmapper)
@@ -549,7 +549,7 @@ def polish_scheme(
     def _ensure_cs_bridge():
         nonlocal cs_bridge
         if cs_bridge is None:
-            from .chemscript_bridge import ChemScriptBridge
+            from ..chemdraw.chemscript_bridge import ChemScriptBridge
             cs_bridge = ChemScriptBridge()
         return cs_bridge
 
@@ -591,7 +591,7 @@ def polish_scheme(
         frag_xml, xmin, ymin, xmax, ymax = frag_info
 
         # Position the new fragment at the old text element's location
-        from .reaction_from_image import _translate_fragment_xml
+        from ..image.reaction_from_image import _translate_fragment_xml
         bb = el.get("BoundingBox", "")
         if bb:
             vals = [float(v) for v in bb.split()]
@@ -1153,7 +1153,7 @@ def _chemdraw_cleanup_reaction(cdxml_path: str, output_path: str,
     log("Running ChemDraw COM cleanup...")
 
     # Import COM helpers from eln_cdx_cleanup
-    from .eln_cdx_cleanup import (
+    from ..chemdraw.eln_cdx_cleanup import (
         _get_chemdraw, _chemdraw_open,
         _restore_chemdraw_window,
     )

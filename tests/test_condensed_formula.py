@@ -3,7 +3,7 @@
 import pytest
 from rdkit import Chem
 
-from cdxml_toolkit.condensed_formula import (
+from cdxml_toolkit.resolve.condensed_formula import (
     resolve_condensed_formula,
     tokenize,
 )

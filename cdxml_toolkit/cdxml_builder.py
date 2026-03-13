@@ -165,7 +165,7 @@ def _build_abbrev_inner_fragment(
     Returns the ``<fragment>...</fragment>`` XML string, or ``""`` on failure.
     """
     try:
-        from .structure_from_image import smiles_to_coords
+        from .image.structure_from_image import smiles_to_coords
         from .coord_normalizer import normalize_coords
     except ImportError:
         return ""

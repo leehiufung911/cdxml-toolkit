@@ -79,7 +79,7 @@ class TestBuildScheme:
 
     def test_basic_build(self, tmp_path):
         """Simplest case: one reactant + one product."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
 
         json_path = _minimal_json(tmp_path)
         out = os.path.join(str(tmp_path), "out.cdxml")
@@ -97,7 +97,7 @@ class TestBuildScheme:
 
     def test_conditions_in_output(self, tmp_path):
         """Conditions should appear in the output CDXML."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         json_path = _minimal_json(tmp_path, conditions=["80 °C", "24 h"])
@@ -118,7 +118,7 @@ class TestBuildScheme:
 
     def test_no_product_exits(self, tmp_path):
         """JSON without any product should exit with error."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
 
         species = [
             {
@@ -135,7 +135,7 @@ class TestBuildScheme:
 
     def test_eln_data_run_arrow(self, tmp_path):
         """ELN data should produce a run arrow."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         eln = {"sm_mass": "100 mg", "product_obtained": "80 mg",
@@ -152,7 +152,7 @@ class TestBuildScheme:
 
     def test_no_run_arrow(self, tmp_path):
         """run_arrow=False should skip run arrow even with ELN data."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         eln = {"sm_mass": "100 mg", "product_obtained": "80 mg"}
@@ -167,7 +167,7 @@ class TestBuildScheme:
 
     def test_default_output_path(self, tmp_path):
         """Without output path, should create {stem}-scheme.cdxml."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
 
         json_path = _minimal_json(tmp_path)
         result = build_scheme(json_path, align_mode="none")
@@ -177,7 +177,7 @@ class TestBuildScheme:
 
     def test_v10_json_compatibility(self, tmp_path):
         """v1.0 JSON (minimal fields) should still work."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
 
         species = [
             {
@@ -212,7 +212,7 @@ class TestSpeciesPartitioning:
 
     def test_non_contributing_goes_to_text(self, tmp_path):
         """Non-contributing species (base/catalyst) → text, not structure."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         species = [
@@ -247,7 +247,7 @@ class TestSpeciesPartitioning:
 
     def test_atom_contributing_above_arrow_is_structure(self, tmp_path):
         """Atom-contributing species repositioned above arrow → drawn structure."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         species = [
@@ -284,7 +284,7 @@ class TestDeduplication:
 
     def test_duplicate_text_removed(self, tmp_path):
         """Duplicate above-arrow text labels should be deduplicated."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         species = [
@@ -332,7 +332,7 @@ class TestTextFormatting:
 
     def test_condition_tokens_not_subscripted(self, tmp_path):
         """Temperature and time should NOT get subscripted digits."""
-        from cdxml_toolkit.scheme_maker import build_scheme
+        from cdxml_toolkit.render.scheme_maker import build_scheme
         import xml.etree.ElementTree as ET
 
         json_path = _minimal_json(tmp_path, conditions=["105 °C", "24 h"])
@@ -368,7 +368,7 @@ class TestCLI:
         """--json-errors should produce JSON on stderr for failures."""
         import subprocess
         r = subprocess.run(
-            [sys.executable, "-m", "cdxml_toolkit.scheme_maker", "nonexistent.json",
+            [sys.executable, "-m", "cdxml_toolkit.render.scheme_maker", "nonexistent.json",
              "--json-errors"],
             capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=30,
         )
@@ -382,7 +382,7 @@ class TestCLI:
         out = os.path.join(str(tmp_path), "out.cdxml")
         import subprocess
         r = subprocess.run(
-            [sys.executable, "-m", "cdxml_toolkit.scheme_maker", json_path,
+            [sys.executable, "-m", "cdxml_toolkit.render.scheme_maker", json_path,
              "-o", out, "--align-mode", "none", "-v"],
             capture_output=True, text=True, cwd=PROJECT_ROOT, timeout=60,
         )

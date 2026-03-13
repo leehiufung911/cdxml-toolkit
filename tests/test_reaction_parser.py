@@ -9,7 +9,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Import the module under test
 # ---------------------------------------------------------------------------
-from cdxml_toolkit.reaction_parser import (
+from cdxml_toolkit.perception.reaction_parser import (
     SpeciesDescriptor,
     ReactionDescriptor,
     split_condition_text,
@@ -360,7 +360,7 @@ class TestDisplayNamePrecedence:
     def test_sm_uses_normal_name_resolution(self):
         """SM species follow normal name precedence (reagent DB > CSV > formula).
         The is_sm flag is preserved for downstream tools but doesn't override name."""
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(id="sp_0", smiles="CCO", name="ethanol",
                               is_sm=True, csv_name="Ethanol"),
@@ -373,7 +373,7 @@ class TestDisplayNamePrecedence:
     def test_dp_uses_normal_name_resolution(self):
         """DP species follow normal name precedence (reagent DB > CSV > formula).
         The is_dp flag is preserved for downstream tools but doesn't override name."""
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(id="sp_0", smiles="CCO", name="product",
                               is_dp=True, csv_name="Product-1"),
@@ -384,7 +384,7 @@ class TestDisplayNamePrecedence:
         assert species[0].is_dp is True  # flag preserved
 
     def test_reagent_db_display(self):
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(id="sp_0", smiles="CCN(CC)CC", name="",
                               is_sm=False, is_dp=False),
@@ -394,7 +394,7 @@ class TestDisplayNamePrecedence:
         assert species[0].name == "Et3N"
 
     def test_csv_name_fallback(self):
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(
                 id="sp_0", smiles=None, name="",
@@ -405,7 +405,7 @@ class TestDisplayNamePrecedence:
         assert species[0].name == "weird reagent from supplier"
 
     def test_formula_fallback(self):
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(
                 id="sp_0", smiles=None, name="",
@@ -416,7 +416,7 @@ class TestDisplayNamePrecedence:
         assert species[0].name == "C6H5Br"
 
     def test_smiles_last_resort(self):
-        from cdxml_toolkit.reaction_parser import _apply_display_names
+        from cdxml_toolkit.perception.reaction_parser import _apply_display_names
         species = [
             SpeciesDescriptor(
                 id="sp_0", smiles="c1ccccc1",
@@ -436,7 +436,7 @@ class TestSmDpIdentification:
     """Tests for SM/DP identification logic."""
 
     def test_csv_substrate_flag(self):
-        from cdxml_toolkit.reaction_parser import _identify_sm_dp
+        from cdxml_toolkit.perception.reaction_parser import _identify_sm_dp
         species = [
             SpeciesDescriptor(id="sp_0", mw=200.0, role="atom_contributing",
                               is_sm=True),  # CSV substrate
@@ -448,7 +448,7 @@ class TestSmDpIdentification:
         assert species[2].is_dp is True
 
     def test_largest_reactant_fallback(self):
-        from cdxml_toolkit.reaction_parser import _identify_sm_dp
+        from cdxml_toolkit.perception.reaction_parser import _identify_sm_dp
         species = [
             SpeciesDescriptor(id="sp_0", mw=100.0, role="atom_contributing"),
             SpeciesDescriptor(id="sp_1", mw=300.0, role="atom_contributing"),
@@ -460,7 +460,7 @@ class TestSmDpIdentification:
         assert species[2].is_dp is True
 
     def test_single_product_is_dp(self):
-        from cdxml_toolkit.reaction_parser import _identify_sm_dp
+        from cdxml_toolkit.perception.reaction_parser import _identify_sm_dp
         species = [
             SpeciesDescriptor(id="sp_0", mw=200.0, role="product"),
         ]
@@ -554,7 +554,7 @@ class TestMassComputation:
     """Tests for mass computation."""
 
     def test_simple_molecule(self):
-        from cdxml_toolkit.reaction_parser import _compute_all_masses
+        from cdxml_toolkit.perception.reaction_parser import _compute_all_masses
         species = [
             SpeciesDescriptor(id="sp_0", smiles="C1COCCN1"),  # morpholine
         ]
@@ -567,7 +567,7 @@ class TestMassComputation:
         assert "[M+H]+" in sp.adducts
 
     def test_salt_splitting(self):
-        from cdxml_toolkit.reaction_parser import _compute_all_masses
+        from cdxml_toolkit.perception.reaction_parser import _compute_all_masses
         species = [
             SpeciesDescriptor(id="sp_0",
                               smiles="O=C([O-])[O-].[Cs+].[Cs+]"),  # Cs2CO3
@@ -579,7 +579,7 @@ class TestMassComputation:
         assert "[Cs" not in (sp.smiles_neutral or "")
 
     def test_adducts_correct(self):
-        from cdxml_toolkit.reaction_parser import _compute_all_masses
+        from cdxml_toolkit.perception.reaction_parser import _compute_all_masses
         species = [
             SpeciesDescriptor(id="sp_0", smiles="C1COCCN1"),
         ]
@@ -598,17 +598,17 @@ class TestExtractConditionsFromText:
     """Tests for extract_conditions_from_text()."""
 
     def test_temperature(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("80 °C")
         assert "80 °C" in result
 
     def test_time(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("24 h")
         assert "24 h" in result
 
     def test_mixed_text(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("Cs2CO3\n80 °C, 24 h\nTHF")
         # Should extract "80 °C" and "24 h" but NOT "Cs2CO3" or "THF"
         assert any("80" in c for c in result)
@@ -617,17 +617,17 @@ class TestExtractConditionsFromText:
         assert not any("Cs" in c for c in result)
 
     def test_empty(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("")
         assert result == []
 
     def test_rt(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("rt")
         assert "rt" in result
 
     def test_overnight(self):
-        from cdxml_toolkit.reaction_parser import extract_conditions_from_text
+        from cdxml_toolkit.perception.reaction_parser import extract_conditions_from_text
         result = extract_conditions_from_text("overnight")
         assert "overnight" in result
 
@@ -636,7 +636,7 @@ class TestDisplayText:
     """Tests for _build_display_texts()."""
 
     def test_reagent_with_equiv(self):
-        from cdxml_toolkit.reaction_parser import _build_display_texts
+        from cdxml_toolkit.perception.reaction_parser import _build_display_texts
         species = [
             SpeciesDescriptor(id="sp_0", name="Cs2CO3",
                               csv_equiv="2.0"),
@@ -645,7 +645,7 @@ class TestDisplayText:
         assert species[0].display_text == "Cs2CO3 (2 eq.)"
 
     def test_substrate_no_equiv(self):
-        from cdxml_toolkit.reaction_parser import _build_display_texts
+        from cdxml_toolkit.perception.reaction_parser import _build_display_texts
         species = [
             SpeciesDescriptor(id="sp_0", name="ArBr",
                               is_substrate=True,
@@ -655,7 +655,7 @@ class TestDisplayText:
         assert species[0].display_text == "ArBr"
 
     def test_solvent_no_equiv(self):
-        from cdxml_toolkit.reaction_parser import _build_display_texts
+        from cdxml_toolkit.perception.reaction_parser import _build_display_texts
         species = [
             SpeciesDescriptor(id="sp_0", name="DMF",
                               is_solvent=True, csv_equiv=""),
@@ -664,7 +664,7 @@ class TestDisplayText:
         assert species[0].display_text == "DMF"
 
     def test_equiv_one_not_shown(self):
-        from cdxml_toolkit.reaction_parser import _build_display_texts
+        from cdxml_toolkit.perception.reaction_parser import _build_display_texts
         species = [
             SpeciesDescriptor(id="sp_0", name="NaH",
                               csv_equiv="1"),
@@ -673,7 +673,7 @@ class TestDisplayText:
         assert species[0].display_text == "NaH"
 
     def test_no_name_gives_none(self):
-        from cdxml_toolkit.reaction_parser import _build_display_texts
+        from cdxml_toolkit.perception.reaction_parser import _build_display_texts
         species = [
             SpeciesDescriptor(id="sp_0", name=""),
         ]
@@ -685,17 +685,17 @@ class TestFormatEquiv:
     """Tests for _format_equiv()."""
 
     def test_integer_equiv(self):
-        from cdxml_toolkit.reaction_parser import _format_equiv
+        from cdxml_toolkit.perception.reaction_parser import _format_equiv
         assert _format_equiv("2.0") == "2"
         assert _format_equiv("3.0") == "3"
 
     def test_decimal_equiv(self):
-        from cdxml_toolkit.reaction_parser import _format_equiv
+        from cdxml_toolkit.perception.reaction_parser import _format_equiv
         assert _format_equiv("0.05") == "0.05"
         assert _format_equiv("1.5") == "1.5"
 
     def test_empty_equiv(self):
-        from cdxml_toolkit.reaction_parser import _format_equiv
+        from cdxml_toolkit.perception.reaction_parser import _format_equiv
         assert _format_equiv("") == ""
         assert _format_equiv(None) == ""
 
@@ -704,14 +704,14 @@ class TestElnData:
     """Tests for _populate_eln_data()."""
 
     def test_no_exp_data(self):
-        from cdxml_toolkit.reaction_parser import _populate_eln_data
+        from cdxml_toolkit.perception.reaction_parser import _populate_eln_data
         desc = ReactionDescriptor()
         _populate_eln_data(desc, None)
         assert desc.eln_data is None
 
     def test_with_product_data(self):
         """Test with a mock exp_data containing product info."""
-        from cdxml_toolkit.reaction_parser import _populate_eln_data
+        from cdxml_toolkit.perception.reaction_parser import _populate_eln_data
         from types import SimpleNamespace
         product = SimpleNamespace(
             obtained_mass="1.6 g", yield_pct="72%", name="product")

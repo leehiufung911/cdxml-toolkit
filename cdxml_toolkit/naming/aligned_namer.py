@@ -32,7 +32,7 @@ from rdkit import Chem, RDLogger
 from rdkit.Chem import rdFMCS
 RDLogger.logger().setLevel(RDLogger.ERROR)
 
-from cdxml_toolkit.name_decomposer import (
+from cdxml_toolkit.naming.name_decomposer import (
     decompose_name, DecompositionResult, name_fragment_as_substituent,
     _validate_name, _canonical, _name_to_smiles,
 )
@@ -2332,7 +2332,7 @@ def format_molecular_diff_html(sm_smiles: str, prod_smiles: str,
 def _quick_name(smiles: str) -> str:
     """Get IUPAC name for a SMILES without full decomposition."""
     try:
-        from cdxml_toolkit.chemscript_bridge import ChemScriptBridge
+        from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
         cs = ChemScriptBridge.get_instance()
         return cs.get_name(smiles)
     except Exception:

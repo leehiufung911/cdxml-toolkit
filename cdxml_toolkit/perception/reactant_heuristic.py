@@ -22,7 +22,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Tuple
 from xml.etree import ElementTree as ET
 
-from .constants import CDXML_FOOTER, CDXML_MINIMAL_HEADER
+from ..constants import CDXML_FOOTER, CDXML_MINIMAL_HEADER
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +49,7 @@ class ReagentInfo:
 # Role Lookup  (Tier 1) — via shared reagent database
 # ---------------------------------------------------------------------------
 
-from .reagent_db import get_reagent_db
+from ..resolve.reagent_db import get_reagent_db
 
 # Transition metals commonly used as catalysts (by atomic number)
 CATALYST_METALS = {46, 28, 29, 77, 45, 44, 78, 76, 79}
@@ -154,7 +154,7 @@ def _get_chemscript():
         return _cs_instance
     _cs_tried = True
     try:
-        from .chemscript_bridge import ChemScriptBridge
+        from ..chemdraw.chemscript_bridge import ChemScriptBridge
         _cs_instance = ChemScriptBridge()
     except Exception as e:
         print(f"  [warn] ChemScript not available: {e}", file=sys.stderr)
@@ -198,7 +198,7 @@ def _text_to_smiles(text_content: str) -> Optional[str]:
 
     # --- Fall back to PubChem (online) ---
     try:
-        from .cas_resolver import resolve_name_to_smiles
+        from ..resolve.cas_resolver import resolve_name_to_smiles
         return resolve_name_to_smiles(text_content)
     except Exception as e:
         print(f"  [warn] name->SMILES failed for '{text_content}': {e}",

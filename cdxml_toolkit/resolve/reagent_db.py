@@ -10,7 +10,7 @@ Tier-1 always wins.  Tier-2 is consulted only when tier-1 returns None.
 Role lookups are tier-1 only (ChemScanner has no role data).
 
 Usage:
-    from cdxml_toolkit.reagent_db import get_reagent_db
+    from cdxml_toolkit.resolve.reagent_db import get_reagent_db
 
     db = get_reagent_db()
     db.display_for_name("cs2co3")        # "Cs2CO3"  (tier-1)

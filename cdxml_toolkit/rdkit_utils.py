@@ -167,7 +167,7 @@ def frag_to_smiles_resolved(frag_elem: ET.Element) -> Optional[str]:
 
     # Try to resolve each abbreviation
     try:
-        from .superatom_table import get_abbrev_label, lookup_smiles
+        from .resolve.superatom_table import get_abbrev_label, lookup_smiles
     except ImportError:
         return frag_to_smiles(frag_elem)
 
@@ -254,7 +254,7 @@ def frag_to_smiles_chemscript(frag_elem: ET.Element) -> Optional[str]:
     import os
 
     try:
-        from .chemscript_bridge import ChemScriptBridge
+        from .chemdraw.chemscript_bridge import ChemScriptBridge
     except ImportError:
         return None
 
@@ -323,7 +323,7 @@ def frag_to_mw(frag_elem: ET.Element) -> Optional[float]:
     # contribute 0 Da).  For each abbreviation, look up its standalone MW
     # and subtract 1.008 (one H lost when it bonds to the core).
     try:
-        from .superatom_table import get_abbrev_label, lookup_mw
+        from .resolve.superatom_table import get_abbrev_label, lookup_mw
     except ImportError:
         return None
 

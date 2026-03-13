@@ -134,7 +134,7 @@ def extract_from_office(
     _converter = None
     if output_format in ("cdxml", "both"):
         try:
-            from . import cdx_converter
+            from ..chemdraw import cdx_converter
             _converter = cdx_converter
         except ImportError:
             print(

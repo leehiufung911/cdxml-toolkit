@@ -19,7 +19,7 @@ from functools import lru_cache
 from typing import List, Optional, Tuple
 
 from rdkit import Chem, RDLogger
-from cdxml_toolkit.chemscript_bridge import ChemScriptBridge
+from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
 
 RDLogger.logger().setLevel(RDLogger.ERROR)
 

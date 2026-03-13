@@ -22,7 +22,7 @@ Usage (CLI):
     python chemscript_bridge.py lcs mol1.cdx mol2.cdx
 
 Python API:
-    from cdxml_toolkit.chemscript_bridge import ChemScriptBridge
+    from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
     cs = ChemScriptBridge()
     cdxml = cs.name_to_cdxml("morpholine")
     cs.convert_file("input.cdx", "output.cdxml")
@@ -38,7 +38,7 @@ import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .constants import ACS_STYLE
+from ..constants import ACS_STYLE
 
 # ---------------------------------------------------------------------------
 # Configuration

@@ -5,11 +5,11 @@ import os
 
 import pytest
 
-from cdxml_toolkit.reagent_db import ReagentDB, get_reagent_db
+from cdxml_toolkit.resolve.reagent_db import ReagentDB, get_reagent_db
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-JSON_PATH = os.path.join(PROJECT_ROOT, "cdxml_toolkit", "reagent_abbreviations.json")
-CS_JSON_PATH = os.path.join(PROJECT_ROOT, "cdxml_toolkit", "chemscanner_abbreviations.json")
+JSON_PATH = os.path.join(PROJECT_ROOT, "cdxml_toolkit", "resolve", "reagent_abbreviations.json")
+CS_JSON_PATH = os.path.join(PROJECT_ROOT, "cdxml_toolkit", "resolve", "chemscanner_abbreviations.json")
 
 
 # =========================================================================

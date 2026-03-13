@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from cdxml_toolkit.spatial_assignment import (
+from cdxml_toolkit.perception.spatial_assignment import (
     ArrowVector,
     AssignmentResult,
     FragmentInfo,
@@ -512,7 +512,7 @@ class TestTopologyCycle:
 
     def test_cycle_detected(self):
         """_detect_topology recognises a cycle."""
-        from cdxml_toolkit.scheme_reader import _detect_topology, StepRecord
+        from cdxml_toolkit.perception.scheme_reader import _detect_topology, StepRecord
         steps = [
             StepRecord(step_index=0, reactant_ids=["a"], product_ids=["b"]),
             StepRecord(step_index=1, reactant_ids=["b"], product_ids=["c"]),
@@ -521,7 +521,7 @@ class TestTopologyCycle:
         assert _detect_topology(steps) == "cycle"
 
     def test_linear_not_cycle(self):
-        from cdxml_toolkit.scheme_reader import _detect_topology, StepRecord
+        from cdxml_toolkit.perception.scheme_reader import _detect_topology, StepRecord
         steps = [
             StepRecord(step_index=0, reactant_ids=["a"], product_ids=["b"]),
             StepRecord(step_index=1, reactant_ids=["b"], product_ids=["c"]),

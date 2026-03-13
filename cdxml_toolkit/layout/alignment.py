@@ -29,8 +29,8 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Set, Tuple
 
-from .constants import ACS_BOND_LENGTH, CDXML_MINIMAL_HEADER
-from .cdxml_utils import write_cdxml
+from ..constants import ACS_BOND_LENGTH, CDXML_MINIMAL_HEADER
+from ..cdxml_utils import write_cdxml
 
 
 # ============================================================================
@@ -680,7 +680,7 @@ def kabsch_align_to_product(
     owns_bridge = cs_bridge is None
     if owns_bridge:
         try:
-            from .chemscript_bridge import ChemScriptBridge
+            from ..chemdraw.chemscript_bridge import ChemScriptBridge
             cs_bridge = ChemScriptBridge()
         except Exception as exc:
             log(f"WARNING: ChemScript unavailable ({exc}), "

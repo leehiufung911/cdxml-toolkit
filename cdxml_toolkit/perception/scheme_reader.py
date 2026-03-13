@@ -18,7 +18,7 @@ CLI:
     python -m cdxml_toolkit.scheme_reader scheme.cdxml --narrative-only
 
 Python API:
-    from cdxml_toolkit.scheme_reader import read_scheme
+    from cdxml_toolkit.perception.scheme_reader import read_scheme
     desc = read_scheme("scheme.cdxml")
     print(desc.narrative)
     desc.to_json("description.json")
@@ -202,7 +202,7 @@ class SchemeDescription:
 
     def to_scheme_descriptor(self) -> "SchemeDescriptor":
         """Convert to a DSL SchemeDescriptor for round-trip rendering."""
-        from .dsl.schema import (SchemeDescriptor, StepDescriptor,
+        from ..render.schema import (SchemeDescriptor, StepDescriptor,
                                  ArrowContent, StructureRef)
 
         structures = {}
@@ -304,7 +304,7 @@ def _extract_yield_from_text(text: str) -> Optional[str]:
 
 def _arrow_endpoints(arrow: ET.Element) -> Tuple[float, float, float, float]:
     """Return (tail_x, tail_y, head_x, head_y) from an arrow element."""
-    from .cdxml_utils import arrow_endpoints
+    from ..cdxml_utils import arrow_endpoints
     return arrow_endpoints(arrow)
 
 
@@ -476,7 +476,7 @@ def _recover_orphan_transition_steps(
     list of _RawStep
         The *raw_steps* list, possibly with additional entries inserted.
     """
-    from .cdxml_utils import arrow_endpoints as _ae, fragment_centroid
+    from ..cdxml_utils import arrow_endpoints as _ae, fragment_centroid
 
     if not raw_steps:
         return raw_steps
@@ -693,7 +693,7 @@ def _parse_from_geometry(page: ET.Element,
 
     Fallback for CDXML files without <scheme><step> attributes.
     """
-    from .cdxml_utils import fragment_centroid
+    from ..cdxml_utils import fragment_centroid
 
     arrows = _find_all_arrows(page)
     if not arrows:
@@ -869,7 +869,7 @@ def _parse_from_spatial_engine(
 def _name_from_smiles(smiles: str) -> Optional[str]:
     """Look up a display name for a SMILES string via reagent_db."""
     try:
-        from .reagent_db import get_reagent_db
+        from ..resolve.reagent_db import get_reagent_db
         db = get_reagent_db()
         entry = db.entry_for_smiles(smiles)
         if entry:
@@ -1020,19 +1020,19 @@ def _build_static_species_registry(
     where no arrows are present.  Returns a species dict keyed by species
     ID, similar to the first return value of ``_build_species_registry``.
     """
-    from .rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
+    from ..rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
 
     # Optional ChemScript
     _frag_to_smiles_cs = None
     _cs_bridge = None
     if use_chemscript:
         try:
-            from .rdkit_utils import frag_to_smiles_chemscript
+            from ..rdkit_utils import frag_to_smiles_chemscript
             _frag_to_smiles_cs = frag_to_smiles_chemscript
         except ImportError:
             pass
         try:
-            from .chemscript_bridge import ChemScriptBridge
+            from ..chemdraw.chemscript_bridge import ChemScriptBridge
             _cs_bridge = ChemScriptBridge()
         except Exception:
             pass
@@ -1170,21 +1170,21 @@ def _build_species_registry(
         CDXML element IDs to lists of species IDs (one-to-many for split
         text blocks).
     """
-    from .rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
+    from ..rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
 
     # Optional ChemScript-based SMILES (best abbreviation resolution)
     _frag_to_smiles_cs = None
     _cs_bridge = None
     if use_chemscript:
         try:
-            from .rdkit_utils import frag_to_smiles_chemscript
+            from ..rdkit_utils import frag_to_smiles_chemscript
             _frag_to_smiles_cs = frag_to_smiles_chemscript
             _log("ChemScript SMILES resolution enabled")
         except ImportError:
             _log("ChemScript not available, using RDKit resolution")
         # Also get ChemScript bridge for IUPAC name generation
         try:
-            from .chemscript_bridge import ChemScriptBridge
+            from ..chemdraw.chemscript_bridge import ChemScriptBridge
             _cs_bridge = ChemScriptBridge()
             _log("ChemScript IUPAC naming enabled")
         except Exception:
@@ -1312,7 +1312,7 @@ def _build_species_registry(
                 # condition tokens (temp, time, atmosphere) are skipped.
                 from .reaction_parser import (
                     _resolve_text_label, _is_condition_token)
-                from .reagent_db import get_reagent_db
+                from ..resolve.reagent_db import get_reagent_db
                 _reagent_db = get_reagent_db()
 
                 _equiv_re = re.compile(
@@ -1488,7 +1488,7 @@ def _find_nearby_label(frag: ET.Element, page: ET.Element,
     Labels are typically short text elements ("1", "2a", "3") positioned
     directly below the fragment bounding box.
     """
-    from .cdxml_utils import fragment_bbox
+    from ..cdxml_utils import fragment_bbox
 
     bbox = fragment_bbox(frag)
     if bbox is None:
@@ -2290,7 +2290,7 @@ def _detect_scope_table(
 
     Returns (scope_entries, new_species) to be merged into the description.
     """
-    from .rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
+    from ..rdkit_utils import frag_to_smiles_resolved, frag_to_smiles, frag_to_mw
 
     # Build set of all element IDs claimed by steps
     claimed: Set[str] = set()
@@ -2504,7 +2504,7 @@ def _find_preferred_parent(desc: "SchemeDescription") -> str:
     Returns the root ring name (e.g. "quinoline") or "" if none found.
     """
     try:
-        from .name_decomposer import decompose_name
+        from ..naming.name_decomposer import decompose_name
     except ImportError:
         return ""
 
@@ -2601,7 +2601,7 @@ def _enrich_aligned_names(desc: "SchemeDescription") -> None:
     Gracefully degrades if aligned_namer is unavailable.
     """
     try:
-        from .aligned_namer import (
+        from ..naming.aligned_namer import (
             find_aligned_names,
             format_molecular_diff,
         )
@@ -2693,7 +2693,7 @@ def read_scheme(
     global _verbose
     _verbose = verbose
 
-    from .cdxml_utils import parse_cdxml, build_id_map
+    from ..cdxml_utils import parse_cdxml, build_id_map
 
     tree = parse_cdxml(cdxml_path)
     root = tree.getroot()

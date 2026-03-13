@@ -14,7 +14,7 @@ import os
 # Allow running from any directory
 HERE = os.path.dirname(os.path.abspath(__file__))
 
-from cdxml_toolkit.rdf_parser import parse_rdf as parse_rdf_file
+from cdxml_toolkit.perception.rdf_parser import parse_rdf as parse_rdf_file
 from cdxml_toolkit.coord_normalizer import normalize_reaction
 from cdxml_toolkit.cdxml_builder import build_reaction_cdxml
 

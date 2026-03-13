@@ -39,7 +39,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from typing import Dict, List, Optional, Tuple
 
-from .constants import (
+from ..constants import (
     ACS_BOND_LENGTH as TARGET_BOND_LENGTH,
     ACS_STYLE as ACS_SETTINGS,
     CDXML_MINIMAL_HEADER,
@@ -334,7 +334,7 @@ def resolve_orphan_reagent_text(root: ET.Element, verbose: bool = False) -> int:
 
     Returns number of text elements resolved.
     """
-    from .reagent_db import get_reagent_db
+    from ..resolve.reagent_db import get_reagent_db
 
     page = root.find("page")
     if page is None:
@@ -525,7 +525,7 @@ def _cleanup_fragments_chemscript(root: ET.Element,
     def _ensure_cs():
         nonlocal cs_bridge
         if cs_bridge is None:
-            from .chemscript_bridge import ChemScriptBridge
+            from ..chemdraw.chemscript_bridge import ChemScriptBridge
             cs_bridge = ChemScriptBridge()
         return cs_bridge
 
@@ -791,7 +791,7 @@ def _cleanup_fragments_rdkit(root: ET.Element,
 
     Returns the number of fragments cleaned.
     """
-    from .rdkit_utils import cleanup_fragment_rdkit
+    from ..rdkit_utils import cleanup_fragment_rdkit
 
     page = root.find("page")
     if page is None:
@@ -1324,7 +1324,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.render:
         try:
-            from .cdxml_to_image import cdxml_to_image
+            from ..chemdraw.cdxml_to_image import cdxml_to_image
             png_path = cdxml_to_image(output_path)
             print(f"Rendered: {png_path}")
         except Exception as e:

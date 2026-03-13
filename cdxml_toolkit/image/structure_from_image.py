@@ -512,7 +512,7 @@ def smiles_to_coords(smiles: str, offset_index: int = 0) -> Optional[Dict]:
 # Coordinate normalisation (inline, no import dependency on coord_normalizer)
 # ---------------------------------------------------------------------------
 
-from .constants import (
+from ..constants import (
     ACS_BOND_LENGTH as ACS_BOND_LENGTH_PT,
     CDXML_HEADER as _CDXML_HEADER,
     CDXML_FOOTER as _CDXML_FOOTER,

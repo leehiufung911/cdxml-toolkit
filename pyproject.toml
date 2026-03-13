@@ -33,6 +33,7 @@ chemdraw = ["pywin32>=300"]
 image = ["opencv-python>=4.5", "Pillow>=9.0"]
 office = ["python-pptx>=0.6", "python-docx>=0.8", "olefile>=0.46"]
 yaml = ["pyyaml>=5.4"]
+mcp = ["mcp>=1.0", "pyyaml>=5.4"]
 all = ["cdxml-toolkit[rdkit,chemdraw,office,yaml]"]
 dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
 
@@ -42,21 +43,22 @@ Repository = "https://github.com/leehiufung911/cdxml-toolkit"
 Issues = "https://github.com/leehiufung911/cdxml-toolkit/issues"
 
 [project.scripts]
-cdxml-render = "cdxml_toolkit.dsl.render_scheme:main"
-cdxml-layout = "cdxml_toolkit.reaction_cleanup:main"
+cdxml-render = "cdxml_toolkit.render.render_scheme:main"
+cdxml-layout = "cdxml_toolkit.layout.reaction_cleanup:main"
 cdxml-build = "cdxml_toolkit.cdxml_builder:main"
-cdxml-convert = "cdxml_toolkit.cdx_converter:main"
-cdxml-image = "cdxml_toolkit.cdxml_to_image:main"
-cdxml-polish = "cdxml_toolkit.scheme_polisher_v2:main"
-cdxml-parse = "cdxml_toolkit.reaction_parser:main"
-cdxml-merge = "cdxml_toolkit.scheme_merger:main"
-cdxml-ole = "cdxml_toolkit.ole_embedder:main"
+cdxml-convert = "cdxml_toolkit.chemdraw.cdx_converter:main"
+cdxml-image = "cdxml_toolkit.chemdraw.cdxml_to_image:main"
+cdxml-polish = "cdxml_toolkit.layout.scheme_polisher_v2:main"
+cdxml-parse = "cdxml_toolkit.perception.reaction_parser:main"
+cdxml-merge = "cdxml_toolkit.layout.scheme_merger:main"
+cdxml-ole = "cdxml_toolkit.office.ole_embedder:main"
+cdxml-mcp = "cdxml_toolkit.mcp_server.server:main"
 
 [tool.setuptools.packages.find]
 include = ["cdxml_toolkit*"]
 
 [tool.setuptools.package-data]
-cdxml_toolkit = ["*.json"]
+"cdxml_toolkit.resolve" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

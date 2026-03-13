@@ -21,7 +21,7 @@ CLI:
     python scheme_maker.py reaction.json --no-run-arrow --verbose
 
 Python API:
-    from cdxml_toolkit.scheme_maker import build_scheme
+    from cdxml_toolkit.render.scheme_maker import build_scheme
     cdxml_path = build_scheme("reaction.json", output="scheme.cdxml")
 """
 
@@ -77,7 +77,7 @@ def _smiles_to_mol_data(smiles: str, offset: int = 0) -> Optional[Dict]:
     explicit H removal, and bond direction annotation.
     """
     try:
-        from .structure_from_image import smiles_to_coords
+        from ..image.structure_from_image import smiles_to_coords
     except ImportError:
         raise RuntimeError(
             "structure_from_image.py is required (for smiles_to_coords). "
@@ -90,7 +90,7 @@ def _smiles_to_mol_data(smiles: str, offset: int = 0) -> Optional[Dict]:
 def _normalize_mol(mol_data: Dict, center_x: float = 0.0,
                    center_y: float = 0.0) -> Tuple[List, List]:
     """Normalize atom coords to ACS bond length (14.40 pt), flip y, center."""
-    from .coord_normalizer import normalize_coords
+    from ..coord_normalizer import normalize_coords
     return normalize_coords(
         mol_data["atoms"], mol_data["bonds"],
         center_x=center_x, center_y=center_y,
@@ -319,7 +319,7 @@ def build_scheme(
         sys.exit(1)
 
     # --- Step 1: Load and validate JSON ---
-    from .reaction_parser import ReactionDescriptor
+    from ..perception.reaction_parser import ReactionDescriptor
 
     desc = ReactionDescriptor.from_json(input_path)
     _log(f"Loaded JSON: {desc.experiment}, {len(desc.species)} species, "
@@ -476,7 +476,7 @@ def build_scheme(
 
     # --- Step 4: Normalize coordinates ---
     _log("Normalizing coordinates...")
-    from .coord_normalizer import normalize_reaction
+    from ..coord_normalizer import normalize_reaction
 
     norm_reactants, norm_products = normalize_reaction(
         reactant_mols, product_mols,
@@ -504,7 +504,7 @@ def build_scheme(
 
     # --- Step 6: Assemble initial CDXML ---
     _log("Assembling CDXML...")
-    from .cdxml_builder import build_reaction_cdxml
+    from ..cdxml_builder import build_reaction_cdxml
 
     cdxml_str = build_reaction_cdxml(
         norm_reactants, norm_products,
@@ -535,7 +535,7 @@ def build_scheme(
 
     # --- Step 10: Run reaction_cleanup (final layout) ---
     _log(f"Running layout ({approach})...")
-    from .reaction_cleanup import run_cleanup
+    from ..layout.reaction_cleanup import run_cleanup
 
     # Determine output path
     if output is None:
@@ -575,8 +575,8 @@ def _insert_above_arrow_structures(cdxml_path: str,
     Normalizes each above-arrow molecule, builds its fragment XML,
     and inserts it into the page.  Updates <step> metadata.
     """
-    from .cdxml_utils import parse_cdxml, write_cdxml
-    from .cdxml_builder import _build_fragment, _IDGen  # noqa: private API
+    from ..cdxml_utils import parse_cdxml, write_cdxml
+    from ..cdxml_builder import _build_fragment, _IDGen  # noqa: private API
 
     tree = parse_cdxml(cdxml_path)
     root = tree.getroot()
@@ -659,10 +659,10 @@ def _apply_text_formatting(cdxml_path: str) -> None:
     and preserving line breaks.  Condition tokens (temperatures, times,
     atmospheres) are left unformatted to avoid spurious subscripts.
     """
-    from .cdxml_utils import parse_cdxml, write_cdxml
+    from ..cdxml_utils import parse_cdxml, write_cdxml
 
     try:
-        from .text_formatting import build_formatted_s_xml
+        from ..text_formatting import build_formatted_s_xml
     except ImportError:
         _log("  text_formatting not available, skipping")
         return
@@ -675,7 +675,7 @@ def _apply_text_formatting(cdxml_path: str) -> None:
 
     # Condition tokens should not be formatted (would get spurious subscripts)
     try:
-        from .reaction_parser import _is_condition_token
+        from ..perception.reaction_parser import _is_condition_token
     except ImportError:
         _is_condition_token = None
 
@@ -776,14 +776,14 @@ def _apply_text_formatting(cdxml_path: str) -> None:
 
 def _run_alignment(cdxml_path: str, align_mode: str) -> None:
     """Align reactant structures to match product orientation."""
-    from .cdxml_utils import parse_cdxml, write_cdxml
+    from ..cdxml_utils import parse_cdxml, write_cdxml
 
     tree = parse_cdxml(cdxml_path)
 
     aligned = 0
     if align_mode == "rxnmapper":
         try:
-            from .alignment import rxnmapper_align_to_product
+            from ..layout.alignment import rxnmapper_align_to_product
             aligned = rxnmapper_align_to_product(tree, verbose=_verbose)
             _log(f"  RXNMapper aligned {aligned} fragments")
         except (ImportError, Exception) as e:
@@ -792,7 +792,7 @@ def _run_alignment(cdxml_path: str, align_mode: str) -> None:
 
     if align_mode == "rdkit":
         try:
-            from .alignment import rdkit_align_to_product
+            from ..layout.alignment import rdkit_align_to_product
             aligned = rdkit_align_to_product(tree, verbose=_verbose)
             _log(f"  RDKit MCS aligned {aligned} fragments")
         except (ImportError, Exception) as e:
@@ -801,7 +801,7 @@ def _run_alignment(cdxml_path: str, align_mode: str) -> None:
 
     if align_mode == "kabsch":
         try:
-            from .alignment import kabsch_align_to_product
+            from ..layout.alignment import kabsch_align_to_product
             aligned = kabsch_align_to_product(tree, verbose=_verbose)
             _log(f"  Kabsch aligned {aligned} fragments")
         except (ImportError, Exception) as e:
@@ -828,7 +828,7 @@ def _add_run_arrow(cdxml_path: str, eln_data: Dict[str, Any]) -> None:
     The run arrow matches the reaction arrow's X-extent and is positioned
     below all existing content (text + structures).
     """
-    from .cdxml_utils import parse_cdxml, write_cdxml
+    from ..cdxml_utils import parse_cdxml, write_cdxml
 
     sm_mass = eln_data.get("sm_mass", "")
     product_obtained = eln_data.get("product_obtained", "")

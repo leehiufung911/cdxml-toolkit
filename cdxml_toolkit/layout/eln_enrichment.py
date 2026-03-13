@@ -25,19 +25,19 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from xml.sax.saxutils import escape as xml_escape
 
-from .cdxml_utils import (
+from ..cdxml_utils import (
     fragment_bbox,
     fragment_bbox_with_label_extension,
     fragment_bottom_has_hanging_label,
     recompute_text_bbox,
 )
-from .constants import (
+from ..constants import (
     CDXML_FOOTER,
     CDXML_MINIMAL_HEADER,
     MW_MATCH_TOLERANCE,
     MW_MATCH_TOLERANCE_LOOSE,
 )
-from .text_formatting import build_formatted_s_xml
+from ..text_formatting import build_formatted_s_xml
 
 
 # ---------------------------------------------------------------------------
@@ -154,8 +154,8 @@ def match_csv_to_scheme(
     -------
     EnrichmentData with all matches + product info.
     """
-    from .eln_csv_parser import parse_eln_csv
-    from .reagent_db import get_reagent_db
+    from ..perception.eln_csv_parser import parse_eln_csv
+    from ..resolve.reagent_db import get_reagent_db
 
     def log(msg: str):
         if verbose:
@@ -471,7 +471,7 @@ def _compute_fragment_mw_rdkit_direct(frag: ET.Element) -> Optional[float]:
     contains abbreviation groups (element 0 / dummy atoms).
     """
     try:
-        from .rdkit_utils import frag_to_mw
+        from ..rdkit_utils import frag_to_mw
         return frag_to_mw(frag)
     except ImportError:
         return None
@@ -482,7 +482,7 @@ def _compute_fragment_mw_rdkit_direct(frag: ET.Element) -> Optional[float]:
 def _compute_fragment_mw_via_smiles(frag: ET.Element) -> Optional[float]:
     """Compute MW via ChemScript SMILES export + RDKit."""
     try:
-        from .chemscript_bridge import ChemScriptBridge
+        from ..chemdraw.chemscript_bridge import ChemScriptBridge
         from rdkit import Chem
         from rdkit.Chem import Descriptors
     except ImportError:
@@ -627,7 +627,7 @@ def reposition_reactant_above_arrow(
     -------
     True if a fragment was repositioned, False otherwise.
     """
-    from .eln_csv_parser import parse_eln_csv
+    from ..perception.eln_csv_parser import parse_eln_csv
 
     def log(msg: str):
         if verbose:
