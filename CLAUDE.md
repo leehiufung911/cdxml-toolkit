@@ -321,7 +321,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-573 tests. All pure Python — no ChemDraw COM required for the test suite.
+537 tests (+ 1 pre-existing failure). All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 
