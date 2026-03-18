@@ -129,7 +129,7 @@ class TestSchemeAligner:
     def test_aligns_and_produces_valid_cdxml(self, tmp_path):
         out = os.path.join(str(tmp_path), "aligned.cdxml")
         r = _run([
-            PYTHON, "-m", "cdxml_toolkit.layout.scheme_aligner",
+            PYTHON, "-m", "cdxml_toolkit.deterministic_pipeline.legacy.scheme_aligner",
             self.cdxml,
             "-o", out,
         ])
@@ -142,7 +142,7 @@ class TestSchemeAligner:
         assert len(frags) >= 2, "aligned output should contain multiple fragments"
 
     def test_stdout_reports_alignment_progress(self):
-        r = _run([PYTHON, "-m", "cdxml_toolkit.layout.scheme_aligner", self.cdxml])
+        r = _run([PYTHON, "-m", "cdxml_toolkit.deterministic_pipeline.legacy.scheme_aligner", self.cdxml])
         assert r.returncode == 0, f"stderr: {r.stderr}"
         text = r.stdout
         # Should report fragments and step info
@@ -223,14 +223,14 @@ class TestElnEnrichment:
 
     def test_module_imports(self):
         """Top-level imports (cdxml_utils, constants, text_formatting) work."""
-        import cdxml_toolkit.layout.eln_enrichment as eln_enrichment
+        import cdxml_toolkit.deterministic_pipeline.legacy.eln_enrichment as eln_enrichment
         assert hasattr(eln_enrichment, "match_csv_to_scheme")
         assert hasattr(eln_enrichment, "enrich_phase_a")
         assert hasattr(eln_enrichment, "enrich_phase_b")
 
     def test_data_structures_instantiate(self):
         """MatchedReagent and EnrichmentData dataclasses work."""
-        from cdxml_toolkit.layout.eln_enrichment import MatchedReagent, EnrichmentData
+        from cdxml_toolkit.deterministic_pipeline.legacy.eln_enrichment import MatchedReagent, EnrichmentData
 
         mr = MatchedReagent(
             csv_name="Cs2CO3",
@@ -263,7 +263,7 @@ class TestElnEnrichment:
         if not os.path.isfile(cdxml_path):
             pytest.skip("KL-CC-001-refactor-test.cdxml not found")
 
-        from cdxml_toolkit.layout.eln_enrichment import match_csv_to_scheme
+        from cdxml_toolkit.deterministic_pipeline.legacy.eln_enrichment import match_csv_to_scheme
 
         tree = ET.parse(cdxml_path)
         root = tree.getroot()

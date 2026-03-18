@@ -28,7 +28,7 @@ pip install -e ".[all]"             # Everything
 |---------|--------|-------------|
 | `cdxml-parse` | `perception.reaction_parser` | Parse ELN exports (CDXML/CDX/RXN/CSV) into a JSON reaction descriptor |
 | `cdxml-render` | `render.render_scheme` | Render YAML, compact text, or JSON into a CDXML reaction scheme |
-| `cdxml-polish` | `layout.scheme_polisher_v2` | Clean up and enrich an ELN-exported CDXML scheme |
+| `cdxml-polish` | `deterministic_pipeline.legacy.scheme_polisher_v2` | Clean up and enrich an ELN-exported CDXML scheme (legacy pipeline) |
 | `cdxml-layout` | `layout.reaction_cleanup` | Re-layout a CDXML reaction (pure Python, no COM) |
 | `cdxml-merge` | `layout.scheme_merger` | Merge multiple schemes (parallel, sequential, or auto-detect) |
 | `cdxml-convert` | `chemdraw.cdx_converter` | Convert between CDX and CDXML (ChemDraw COM) |
@@ -132,17 +132,6 @@ Full syntax references: `experiments/scheme_dsl/YAML_SYNTAX.md` and `COMPACT_SYN
 - **Compound labels** — numbered labels below structures (e.g. "KL-CC-001")
 - **Letter conditions** — `a`, `b`, `c` labels on arrows with legend
 
-## Polisher pipeline (alternative to JSON-first)
-
-Surgically modifies an ELN-exported CDXML rather than building from scratch. Preserves original ChemDraw drawings while cleaning layout, classifying reagents, and injecting ELN data.
-
-```bash
-cdxml-polish experiment.cdxml -o polished.cdxml \
-    --approach chemdraw_mimic \
-    --align-mode mcs \
-    --eln-csv experiment.csv
-```
-
 ## Package structure
 
 ```
@@ -157,7 +146,7 @@ cdxml_toolkit/
 ├── cdxml_builder.py            # Build CDXML from atom/bond data
 ├── coord_normalizer.py         # Coordinate normalization to ACS 1996
 │
-│  # ── Subpackages ────────────────────────────────────────
+│  # ── Agent-friendly subpackages ─────────────────────────
 ├── perception/                 # Read and understand reaction schemes
 │   ├── scheme_reader.py        # CDXML → SchemeDescription JSON
 │   ├── scheme_segmenter.py     # Multi-panel CDXML auto-segmentation
@@ -166,8 +155,6 @@ cdxml_toolkit/
 │   ├── reactant_heuristic.py   # Reagent role classification (FP + MCS)
 │   ├── eln_csv_parser.py       # Findmolecule ELN CSV parser
 │   ├── rdf_parser.py           # SciFinder .rdf reaction parser
-│   ├── scheme_reader_audit.py  # Quality audit tool
-│   ├── scheme_reader_verify.py # Visual HTML verification report
 │   └── scheme_refine.py        # LLM-based refinement layer
 │
 ├── resolve/                    # Chemical name/formula → SMILES
@@ -179,7 +166,7 @@ cdxml_toolkit/
 │   ├── chemscanner_abbreviations.json
 │   └── superatom_data.json
 │
-├── render/                     # Generate CDXML from descriptions (was dsl/)
+├── render/                     # Generate CDXML from descriptions
 │   ├── schema.py               # Dataclass definitions
 │   ├── parser.py               # YAML → SchemeDescriptor
 │   ├── compact_parser.py       # Compact text → SchemeDescriptor
@@ -189,26 +176,22 @@ cdxml_toolkit/
 │   ├── scheme_yaml_writer.py   # JSON → YAML layout decisions
 │   └── scheme_maker.py         # JSON → CDXML scheme (experimental)
 │
-├── layout/                     # Polish, align, merge existing schemes
-│   ├── scheme_polisher.py      # Surgical CDXML modification
-│   ├── scheme_polisher_v2.py   # Full polishing pipeline
+├── layout/                     # Composable layout tools
 │   ├── reaction_cleanup.py     # Pure-Python layout (6 approaches)
 │   ├── alignment.py            # Structure alignment (Kabsch, MCS, RXNMapper)
-│   ├── scheme_aligner.py       # Product-relative MCS alignment
-│   ├── scheme_merger.py        # Multi-scheme merging (parallel/seq/auto)
-│   └── eln_enrichment.py       # ELN CSV → scheme annotation
+│   └── scheme_merger.py        # Multi-scheme merging (parallel/seq/auto)
 │
 ├── naming/                     # IUPAC name analysis and alignment
 │   ├── name_decomposer.py      # IUPAC name decomposition (ChemScript)
-│   └── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
+│   ├── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
+│   └── mol_builder.py          # LLM-guided molecule assembly
 │
 ├── chemdraw/                   # ChemDraw-specific integrations (COM, ChemScript)
 │   ├── cdx_converter.py        # CDX ↔ CDXML (COM / pycdxml / obabel)
 │   ├── cdxml_to_image.py       # CDXML → PNG/SVG (ChemDraw COM)
 │   ├── cdxml_to_image_rdkit.py # CDXML → image (RDKit-only backup)
 │   ├── chemscript_bridge.py    # ChemScript .NET bridge
-│   ├── _chemscript_server.py   # 32-bit subprocess server
-│   └── eln_cdx_cleanup.py      # ELN CDX file cleanup
+│   └── _chemscript_server.py   # 32-bit subprocess server
 │
 ├── office/                     # Office document integration (OLE, PPTX, DOCX)
 │   ├── ole_embedder.py         # CDXML → editable OLE in PPTX/DOCX
@@ -219,7 +202,30 @@ cdxml_toolkit/
 │   ├── structure_from_image.py # Image → SMILES + 2D coords (DECIMER)
 │   └── reaction_from_image.py  # Screenshot → reaction scheme CDXML
 │
-└── mcp_server/                 # Model Context Protocol server (unchanged)
+├── analysis/                   # LCMS parsing, species ID, lab book generation
+│   ├── lcms_analyzer.py        # Single-file LCMS PDF parser (Waters + manual)
+│   ├── format_procedure_entry.py # Agent-driven entries-based lab book formatter
+│   ├── extract_nmr.py          # NMR data extraction from MestReNova PDFs
+│   └── deterministic/          # Original deterministic batch pipeline
+│       ├── multi_lcms_analyzer.py  # Cross-file LCMS collation
+│       ├── procedure_writer.py     # Lab book entry assembler
+│       ├── lcms_identifier.py      # LCMS species identification by mass
+│       ├── lab_book_formatter.py   # Output section formatting
+│       ├── mass_resolver.py        # Structure-based mass determination
+│       ├── lcms_file_categorizer.py # LCMS filename classification
+│       └── discover_experiment_files.py # Experiment file discovery
+│
+├── deterministic_pipeline/     # Rigid multi-step workflows (not for agent composition)
+│   ├── scheme_reader_audit.py  # Quality audit for scheme_reader output
+│   ├── scheme_reader_verify.py # Visual HTML verification report
+│   └── legacy/                 # Old polisher pipeline (non-JSON-first)
+│       ├── scheme_polisher.py      # Surgical CDXML modification (9-step chain)
+│       ├── scheme_polisher_v2.py   # COM-free polishing pipeline (cdxml-polish CLI)
+│       ├── eln_enrichment.py       # ELN CSV → scheme annotation (two-phase)
+│       ├── scheme_aligner.py       # Product-relative MCS alignment
+│       └── eln_cdx_cleanup.py      # ELN CDX file cleanup (ChemDraw COM)
+│
+└── mcp_server/                 # Model Context Protocol server
     ├── server.py
     ├── __main__.py
     └── __init__.py
@@ -277,6 +283,19 @@ Reads CDXML reaction schemes into structured `SchemeDescription` JSON. Dual-stra
 ### perception/eln_csv_parser.py
 Parses Findmolecule ELN CSV exports (semicolon-delimited, @TYPE sections) into `ExperimentData` dataclass with reactants, solvents, product, and metadata. Pure stdlib, no external dependencies.
 
+## Legacy polisher pipeline
+
+The older non-JSON-first pipeline lives in `deterministic_pipeline/legacy/`. It surgically modifies ELN-exported CDXML rather than building from scratch. Preserved for backward compatibility but not recommended for new agent workflows.
+
+```bash
+cdxml-polish experiment.cdxml -o polished.cdxml \
+    --approach chemdraw_mimic \
+    --align-mode mcs \
+    --eln-csv experiment.csv
+```
+
+Pipeline: `eln_cdx_cleanup` (CDX→CDXML + COM cleanup) → `scheme_polisher_v2` (ACS normalization + reagent classification + structure/text swaps + alignment + formatting) → `eln_enrichment` (equiv injection + run arrows).
+
 ## CDXML conventions
 
 - Carbon atoms: no `Element` attribute. Heteroatoms: `Element` number + `NumHydrogens`.
@@ -321,7 +340,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-537 tests (+ 1 pre-existing failure). All pure Python — no ChemDraw COM required for the test suite.
+646 tests (+ 1 pre-existing failure). All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 

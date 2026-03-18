@@ -31,7 +31,7 @@ from html import escape as html_escape
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .scheme_reader import read_scheme, SchemeDescription
+from ..perception.scheme_reader import read_scheme, SchemeDescription
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,7 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from ..constants import ACS_BOND_LENGTH
+from ...constants import ACS_BOND_LENGTH
 
 try:
     from rdkit import Chem, RDLogger
