@@ -132,6 +132,118 @@ Full syntax references: `experiments/scheme_dsl/YAML_SYNTAX.md` and `COMPACT_SYN
 - **Compound labels** — numbered labels below structures (e.g. "KL-CC-001")
 - **Letter conditions** — `a`, `b`, `c` labels on arrows with legend
 
+## Agent playbook
+
+This section maps common agent intents to the right tool chains. The toolkit is designed for LLM orchestration — the agent reasons about chemistry and calls tools; it never generates SMILES directly.
+
+### Core principle: never generate SMILES
+
+LLMs are unreliable at producing valid SMILES strings. Instead, use grounded tools:
+
+| Need SMILES for... | Use this |
+|---------------------|----------|
+| A known compound name/abbreviation | `mol_builder.resolve_to_smiles("Cs2CO3")` |
+| A structure in an image | `image/structure_from_image.py` (DECIMER extraction) |
+| A reaction product | `mol_builder.apply_reaction()` or `mol_builder.deprotect()` |
+| A modified molecule | `mol_builder.modify_name()` or `mol_builder.assemble_name()` |
+
+### Key Python APIs for agents
+
+**Name resolution** (public API — use this, not the private `_resolve_text_label`):
+```python
+from cdxml_toolkit.naming.mol_builder import resolve_to_smiles
+result = resolve_to_smiles("2-fluoronicotinic acid")
+# {'ok': True, 'smiles': '...', 'source': 'opsin'}
+```
+
+**Molecule construction** (reaction templates, deprotection, name surgery):
+```python
+from cdxml_toolkit.naming.mol_builder import (
+    apply_reaction, deprotect, list_reactions,
+    assemble_name, modify_name, get_prefix_form, validate_name,
+    get_tool_definitions,   # export schemas for LLM function calling
+)
+
+# Deprotect a Boc-protected amine
+result = deprotect(boc_amine_smiles)
+# {'ok': True, 'product_smiles': '...', 'removed': ['Boc']}
+
+# Amide coupling
+result = apply_reaction("amide_coupling", amine_smiles, acid_smiles)
+# {'ok': True, 'products': [{'smiles': '...', 'name': '...'}]}
+
+# See available reaction templates
+templates = list_reactions()
+```
+
+**Structure understanding** (decompose a molecule to reason about reactivity):
+```python
+from cdxml_toolkit.naming.name_decomposer import decompose_name
+result = decompose_name(smiles)
+# DecompositionResult with canonical_name, bracket_tree, alternatives
+# Shows parent scaffold, substituents, functional groups — lets the agent
+# "see" the molecule from multiple angles before choosing a reaction.
+```
+
+**Scheme rendering** (direct Python API — no YAML files needed):
+```python
+from cdxml_toolkit.render.schema import (
+    SchemeDescriptor, StepDescriptor, StructureRef, ArrowContent,
+)
+from cdxml_toolkit.render.renderer import render, render_to_file
+
+scheme = SchemeDescriptor(
+    layout="sequential",
+    structures={
+        "SM": StructureRef(id="SM", smiles="..."),
+        "Product": StructureRef(id="Product", smiles="..."),
+    },
+    steps=[
+        StepDescriptor(
+            substrates=["SM"], products=["Product"],
+            below_arrow=ArrowContent(text=["TFA", "DCM"]),
+        ),
+    ],
+)
+render_to_file(scheme, "scheme.cdxml")
+```
+
+### Workflow recipes
+
+**"Draw a scheme from an image"**
+1. `image/reaction_from_image.py` — extract structures from screenshot via DECIMER
+2. `perception/reaction_parser.py` — parse into semantic JSON (species, roles, SMILES)
+3. `render/render_scheme.py --from-json` — render JSON into CDXML scheme
+
+**"Draw a scheme I describe in words"**
+1. `mol_builder.resolve_to_smiles()` — resolve each named compound to SMILES
+2. `naming/name_decomposer.decompose_name()` — understand structure/reactivity if needed
+3. `mol_builder.apply_reaction()` / `deprotect()` — compute products
+4. Build `SchemeDescriptor` with steps → `render()` → CDXML
+
+**"What would this reaction produce?"**
+1. `mol_builder.resolve_to_smiles()` — get SMILES for all reactants
+2. `naming/name_decomposer.decompose_name()` — analyze functional groups present
+3. `mol_builder.list_reactions()` — find applicable reaction templates
+4. `mol_builder.apply_reaction()` — get product SMILES
+
+**"Resolve a compound name"**
+- `mol_builder.resolve_to_smiles(name)` — 4-tier chain: reagent DB → condensed formula → OPSIN → PubChem
+
+**"Modify an existing structure"**
+- `mol_builder.modify_name(smiles, add=[...], remove=[...])` — add/swap/remove substituents via IUPAC name manipulation
+- `mol_builder.assemble_name(parent, substituents)` — build from scratch
+
+### LLM function-calling integration
+
+`mol_builder.get_tool_definitions()` exports all tool schemas in Anthropic tool-use format. Register these as available tools in your LLM orchestrator:
+
+```python
+from cdxml_toolkit.naming.mol_builder import get_tool_definitions
+tools = get_tool_definitions()
+# [{"name": "resolve_to_smiles", "description": "...", "input_schema": {...}}, ...]
+```
+
 ## Package structure
 
 ```
@@ -181,10 +293,10 @@ cdxml_toolkit/
 │   ├── alignment.py            # Structure alignment (Kabsch, MCS, RXNMapper)
 │   └── scheme_merger.py        # Multi-scheme merging (parallel/seq/auto)
 │
-├── naming/                     # IUPAC name analysis and alignment
-│   ├── name_decomposer.py      # IUPAC name decomposition (ChemScript)
-│   ├── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
-│   └── mol_builder.py          # LLM-guided molecule assembly
+├── naming/                     # Agent chemistry reasoning tools
+│   ├── mol_builder.py          # Agent API: resolve names, apply reactions, deprotect, name surgery
+│   ├── name_decomposer.py      # Structural decomposition: see a molecule's functional groups
+│   └── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
 │
 ├── chemdraw/                   # ChemDraw-specific integrations (COM, ChemScript)
 │   ├── cdx_converter.py        # CDX ↔ CDXML (COM / pycdxml / obabel)
