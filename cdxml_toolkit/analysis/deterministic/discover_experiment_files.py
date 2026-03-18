@@ -41,6 +41,11 @@ class LCMSFileRecord:
     group_prefix: Optional[str] = None     # tracking group prefix (batch categorizer)
     method_variant: Optional[str] = None   # filename-derived method hint (AmB, AmF, etc.)
 
+    @property
+    def filename(self) -> str:
+        """Basename of the file path."""
+        return os.path.basename(self.path)
+
 @dataclass
 class DiscoveryResult:
     """All discovered files for an experiment."""

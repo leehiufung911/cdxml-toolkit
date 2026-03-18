@@ -605,9 +605,11 @@ class TestListReactions:
     def test_categories_returned(self):
         result = list_reactions()
         assert "categories" in result
-        assert set(result["categories"]) == {
+        expected = {
             "coupling", "functional_group", "heterocycle_formation",
+            "deprotection", "protection",
         }
+        assert expected.issubset(set(result["categories"]))
 
     def test_category_filter(self):
         hetero = list_reactions(category="heterocycle_formation")

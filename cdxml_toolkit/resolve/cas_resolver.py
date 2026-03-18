@@ -64,7 +64,8 @@ def resolve_cas(cas: str, include_coords: bool = False) -> Optional[Dict[str, An
         "name": props.get("IUPACName", ""),
         "mw": props.get("MolecularWeight"),
         "formula": props.get("MolecularFormula", ""),
-        "smiles": (props.get("CanonicalSMILES")
+        "smiles": (props.get("IsomericSMILES")
+                   or props.get("CanonicalSMILES")
                    or props.get("SMILES")
                    or props.get("ConnectivitySMILES", "")),
         "isomeric_smiles": (props.get("IsomericSMILES")
@@ -320,7 +321,10 @@ def resolve_name_to_smiles(name: str) -> Optional[str]:
 
     _rate_limit()
     encoded = urllib.parse.quote(name, safe="")
-    url = f"{PUBCHEM_BASE}/compound/name/{encoded}/property/CanonicalSMILES/JSON"
+    # Request IsomericSMILES (preserves isotopes, stereochemistry) with
+    # CanonicalSMILES as fallback.
+    url = (f"{PUBCHEM_BASE}/compound/name/{encoded}"
+           f"/property/IsomericSMILES,CanonicalSMILES/JSON")
 
     try:
         req = urllib.request.Request(url)
@@ -330,12 +334,12 @@ def resolve_name_to_smiles(name: str) -> Optional[str]:
             props = data.get("PropertyTable", {}).get("Properties", [])
             if props:
                 p = props[0]
-                # PubChem returns SMILES under varying keys depending on
-                # API version / compound type.
-                smiles = (p.get("CanonicalSMILES")
+                # Prefer IsomericSMILES — preserves isotope labels (e.g.
+                # deuterium in deucravacitinib) and stereochemistry.
+                smiles = (p.get("IsomericSMILES")
+                          or p.get("CanonicalSMILES")
                           or p.get("SMILES")
-                          or p.get("ConnectivitySMILES")
-                          or p.get("IsomericSMILES"))
+                          or p.get("ConnectivitySMILES"))
                 if smiles:
                     return smiles
     except urllib.error.HTTPError as e:

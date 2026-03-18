@@ -1426,7 +1426,7 @@ def reaction_from_image(
         print(f"[reaction_from_image] Extracting structures from {image_path}...",
               file=sys.stderr)
 
-    structures = sfi.extract_structures_from_image(
+    structures = sfi._extract_structures_raw(
         image_path,
         page=page,
         segment=segment,
@@ -1556,7 +1556,7 @@ def reaction_from_image_to_json(
 
     # Step 1: Extract structures (DECIMER)
     _log(f"Extracting structures from {image_path}...")
-    structures = sfi.extract_structures_from_image(
+    structures = sfi._extract_structures_raw(
         image_path,
         page=page,
         segment=segment,

@@ -348,7 +348,159 @@ def _try_validate(name: str, use_network: bool = True) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Tool 1: resolve_to_smiles
+# RDKit property helpers
+# ---------------------------------------------------------------------------
+
+def _rdkit_properties(smiles: str) -> Dict[str, Any]:
+    """Compute formula, MW, and exact mass from a SMILES via RDKit.
+
+    Returns a dict with keys ``formula``, ``mw``, ``exact_mass``.
+    Values are None if RDKit is unavailable or the molecule is invalid.
+    """
+    props: Dict[str, Any] = {"formula": None, "mw": None, "exact_mass": None}
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Descriptors, rdMolDescriptors
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return props
+        props["formula"] = rdMolDescriptors.CalcMolFormula(mol)
+        props["mw"] = round(Descriptors.MolWt(mol), 4)
+        props["exact_mass"] = round(Descriptors.ExactMolWt(mol), 4)
+    except Exception:
+        pass
+    return props
+
+
+# ---------------------------------------------------------------------------
+# Tool 1: resolve_compound (rich resolver)
+# ---------------------------------------------------------------------------
+
+def resolve_compound(query: str, use_network: bool = True) -> Dict[str, Any]:
+    """Resolve any chemical identifier to a rich molecule descriptor.
+
+    Consolidates all resolution pathways (reagent DB, condensed formula,
+    ChemScript, PubChem) and enriches the result with molecular properties
+    computed via RDKit and metadata from the reagent database.
+
+    Args:
+        query: Chemical identifier — common name, IUPAC name, abbreviation,
+               condensed formula, or CAS number.  Examples:
+               ``"aspirin"``, ``"PhB(OH)2"``, ``"2-chloropyridine"``,
+               ``"534-17-8"``, ``"deucravacitinib"``.
+        use_network: Allow PubChem lookup (requires internet).
+
+    Returns:
+        Dict with keys:
+
+        - ``ok`` (bool): True on success.
+        - ``name`` (str): Input query echoed back.
+        - ``smiles`` (str): Isomeric/canonical SMILES.
+        - ``formula`` (str | None): Molecular formula (e.g. ``"C9H8O4"``).
+        - ``mw`` (float | None): Molecular weight.
+        - ``exact_mass`` (float | None): Monoisotopic mass.
+        - ``iupac_name`` (str | None): IUPAC name from ChemScript or PubChem.
+        - ``source`` (str): Which tier resolved the SMILES (``"reagent_db"``,
+          ``"formula"``, ``"chemscript"``, ``"pubchem"``).
+        - ``role`` (str | None): Reagent role from the curated DB if known
+          (e.g. ``"base"``, ``"solvent"``, ``"catalyst"``).
+        - ``display_text`` (str | None): Preferred display name from the
+          reagent DB, or the IUPAC name if available.
+        - ``prefix_form`` (str | None): IUPAC substituent prefix for use in
+          ``assemble_name`` (e.g. ``"trifluoromethyl"`` for ``CF3``,
+          ``"morpholino"`` for morpholine).  ``None`` if the compound is not
+          a substituent group or no prefix could be determined.
+
+        On failure: ``ok=False`` with an ``error`` key.
+
+    Example::
+
+        >>> resolve_compound("Cs2CO3")
+        {'ok': True, 'name': 'Cs2CO3', 'smiles': 'O=C([O-])[O-].[Cs+].[Cs+]',
+         'formula': 'CCs2O3', 'mw': 325.82, 'exact_mass': 325.82,
+         'iupac_name': None, 'source': 'reagent_db',
+         'role': 'base', 'display_text': 'Cs2CO3', 'prefix_form': None}
+
+        >>> resolve_compound("Et3N")
+        {'ok': True, 'name': 'Et3N', 'smiles': 'CCN(CC)CC',
+         'formula': 'C6H15N', 'mw': 101.19, 'exact_mass': 101.12,
+         'iupac_name': None, 'source': 'formula',
+         'role': None, 'display_text': None, 'prefix_form': None}
+
+        >>> resolve_compound("CF3")
+        {'ok': True, ..., 'prefix_form': 'trifluoromethyl'}
+
+        >>> resolve_compound("morpholine")
+        {'ok': True, ..., 'prefix_form': 'morpholino'}
+    """
+    # --- Step 1: resolve SMILES via the existing 4-tier chain ---
+    resolved = _resolve_query(query, use_network=use_network)
+    if not resolved:
+        return {"ok": False, "error": f"Could not resolve '{query}' to a structure."}
+
+    smiles = resolved["smiles"]
+    source = resolved["source"]
+
+    # --- Step 2: compute molecular properties via RDKit ---
+    props = _rdkit_properties(smiles)
+
+    # --- Step 3: IUPAC name via ChemScript (best quality) ---
+    iupac_name: Optional[str] = None
+    if source == "chemscript":
+        # ChemScript already resolved this name — get the canonical IUPAC back
+        iupac_name = _smiles_to_name_cs(smiles)
+    elif source != "reagent_db":
+        # For formula/pubchem sources, try ChemScript name generation
+        iupac_name = _smiles_to_name_cs(smiles)
+
+    # --- Step 4: role and display_text from reagent_db ---
+    role: Optional[str] = None
+    display_text: Optional[str] = None
+    try:
+        from cdxml_toolkit.resolve.reagent_db import get_reagent_db
+        db = get_reagent_db()
+        # Try by name first (fastest), then by resolved SMILES
+        entry = db.entry_for_name(query.lower())
+        if entry is None:
+            entry = db.entry_for_smiles(smiles)
+        if entry is not None:
+            role = entry.get("role")
+            display_text = entry.get("display")
+    except Exception:
+        pass
+
+    # Fall back: display_text from IUPAC name if reagent_db had nothing
+    if display_text is None and iupac_name:
+        display_text = iupac_name
+
+    # --- Step 5: IUPAC substituent prefix form ---
+    prefix_form: Optional[str] = None
+    pf_result = get_prefix_form(query)
+    if pf_result.get("ok"):
+        prefix_form = pf_result["prefix"]
+    else:
+        # Try on the resolved SMILES as a fallback
+        pf_result2 = get_prefix_form(smiles)
+        if pf_result2.get("ok"):
+            prefix_form = pf_result2["prefix"]
+
+    return {
+        "ok": True,
+        "name": query,
+        "smiles": smiles,
+        "formula": props["formula"],
+        "mw": props["mw"],
+        "exact_mass": props["exact_mass"],
+        "iupac_name": iupac_name,
+        "source": source,
+        "role": role,
+        "display_text": display_text,
+        "prefix_form": prefix_form,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Tool 2 (legacy thin wrapper): resolve_to_smiles
 # ---------------------------------------------------------------------------
 
 def resolve_to_smiles(query: str, use_network: bool = True) -> Dict[str, Any]:
@@ -357,6 +509,10 @@ def resolve_to_smiles(query: str, use_network: bool = True) -> Dict[str, Any]:
     Accepts common names, IUPAC names, abbreviations, condensed formulae,
     and CAS numbers.  Uses a 4-tier resolution chain:
     reagent DB → condensed formula → ChemScript → PubChem.
+
+    .. note::
+        For richer output (formula, MW, exact mass, role, display text),
+        use :func:`resolve_compound` instead.
 
     Args:
         query: Chemical identifier.  Examples: ``"aspirin"``,
@@ -372,10 +528,10 @@ def resolve_to_smiles(query: str, use_network: bool = True) -> Dict[str, Any]:
         >>> resolve_to_smiles("Et3N")
         {'ok': True, 'smiles': 'CCN(CC)CC', 'source': 'formula'}
     """
-    result = _resolve_query(query, use_network=use_network)
-    if result:
+    result = resolve_compound(query, use_network=use_network)
+    if result["ok"]:
         return {"ok": True, "smiles": result["smiles"], "source": result["source"]}
-    return {"ok": False, "error": f"Could not resolve '{query}' to a structure."}
+    return {"ok": False, "error": result.get("error", f"Could not resolve '{query}'.")}
 
 
 # ---------------------------------------------------------------------------
@@ -1066,8 +1222,8 @@ def enumerate_names(identifier: str,
 # ---------------------------------------------------------------------------
 
 # Hand-curated templates for common med-chem transformations that an LLM
-# will recognise by name.  These supplement the larger ring-forming
-# collection loaded from reactions_datamol.json.
+# will recognise by name.  These supplement the larger collection loaded
+# from reactions_datamol.json.
 _CLASSIC_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "suzuki_coupling": {
         "description": "Suzuki coupling: aryl halide + boronic acid to biaryl",
@@ -1195,23 +1351,287 @@ _CLASSIC_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "conditions": ["THF", "-78 °C to rt"],
         "category": "functional_group",
     },
+    # --- Hartenfeller-Schneider extras (not in datamol) ---
+    "amide_hydrolysis": {
+        "description":
+            "Amide hydrolysis to carboxylic acid (RCONHR' \u2192 RCOOH)",
+        "smarts": "[C:1](=[O:2])[NX3:3]>>[C:1](=[O:2])[OH]",
+        "n_reactants": 1,
+        "substrate_hint": "amide (primary, secondary, or tertiary)",
+        "reagent_hint": None,
+        "conditions": ["6M HCl or 2M NaOH", "reflux"],
+        "category": "functional_group",
+    },
+    "wittig": {
+        "description":
+            "Wittig olefination: aldehyde/ketone + alkyl halide to alkene",
+        "smarts":
+            "[#6:3]-[C;H1,$([CH0](-[#6])[#6]);!$(CC=O):1]=[OD1]"
+            ".[Cl,Br,I][C;H2;$(C-[#6]);!$(CC[I,Br]);!$(CCO[CH3]):2]"
+            ">>[C:3][C:1]=[C:2]",
+        "n_reactants": 2,
+        "substrate_hint": "aldehyde or ketone",
+        "reagent_hint": "alkyl halide (ylide precursor)",
+        "conditions": ["PPh3", "n-BuLi", "THF", "0 \u00b0C to rt"],
+        "category": "functional_group",
+    },
+    "niementowski_quinazoline": {
+        "description":
+            "Niementowski quinazoline: anthranilic acid + amide "
+            "\u2192 4-quinazolinone",
+        "smarts":
+            "[c:1](-[C;$(C-c1ccccc1):2](=[OD1:3])-[OH1])"
+            ":[c:4](-[NH2:5])"
+            ".[N;!H0;!$(N-N);!$(N-C=N);!$(N(-C=O)-C=O):6]"
+            "-[C;H1,$(C-[#6]):7]=[OD1]"
+            ">>[c:4]2:[c:1]-[C:2](=[O:3])-[N:6]-[C:7]=[N:5]-2",
+        "n_reactants": 2,
+        "substrate_hint": "anthranilic acid derivative",
+        "reagent_hint": "amide or formamide",
+        "conditions": ["neat or AcOH", "120\u2013150 \u00b0C"],
+        "category": "heterocycle_formation",
+    },
+    "grignard_carbonyl": {
+        "description":
+            "Grignard on nitrile: nitrile + aryl/alkyl halide \u2192 ketone",
+        "smarts":
+            "[#6:1][C:2]#[#7;D1]"
+            ".[Cl,Br,I][#6;$([#6]~[#6]);"
+            "!$([#6]([Cl,Br,I])[Cl,Br,I]);!$([#6]=O):3]"
+            ">>[#6:1][C:2](=O)[#6:3]",
+        "n_reactants": 2,
+        "substrate_hint": "nitrile (R\u2212C\u2261N)",
+        "reagent_hint": "aryl or alkyl halide (Grignard precursor)",
+        "conditions": ["Mg", "THF", "then H3O+"],
+        "category": "functional_group",
+    },
+    # --- Deprotection templates (SMARTS from RDKit rdDeprotect source) ---
+    "cbz_deprotection": {
+        "description": "Remove Cbz (carbobenzyloxy) from amine",
+        "smarts":
+            "[NX3;H0,H1:1][C;R0](=O)[O;R0][C;R0]"
+            "c1[c;H1][c;H1][c;H1][c;H1][c;H1]1>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Cbz-protected amine",
+        "reagent_hint": None,
+        "conditions": ["H2", "Pd/C", "MeOH", "rt"],
+        "category": "deprotection",
+    },
+    "fmoc_deprotection": {
+        "description": "Remove Fmoc (9-fluorenylmethyloxycarbonyl) from amine",
+        "smarts":
+            "[NX3;H0,H1:1][#6](=O)-[#8]-[#6]-[#6]-1"
+            "-c2ccccc2-c2ccccc-12>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Fmoc-protected amine",
+        "reagent_hint": None,
+        "conditions": ["piperidine", "DMF", "rt"],
+        "category": "deprotection",
+    },
+    "tbs_deprotection": {
+        "description": "Remove TBS (tert-butyldimethylsilyl) from alcohol",
+        "smarts": "CC(C)([Si](C)(C)[O;H0:1])C>>[O;H1:1]",
+        "n_reactants": 1,
+        "substrate_hint": "TBS-protected alcohol",
+        "reagent_hint": None,
+        "conditions": ["TBAF", "THF", "rt"],
+        "category": "deprotection",
+    },
+    "bn_deprotection_o": {
+        "description": "Remove benzyl (Bn) from alcohol",
+        "smarts":
+            "[O;!$(*C(=O)):1][CH2]"
+            "c1[c;H1][c;H1][c;H1][c;H1][c;H1]1>>[O;H1:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Bn-protected alcohol",
+        "reagent_hint": None,
+        "conditions": ["H2", "Pd/C", "EtOAc", "rt"],
+        "category": "deprotection",
+    },
+    "bn_deprotection_n": {
+        "description": "Remove benzyl (Bn) from amine",
+        "smarts":
+            "[NX3;H0,H1;!$(NC=O):1][C;H2]"
+            "c1[c;H1][c;H1][c;H1][c;H1][c;H1]1>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Bn-protected amine",
+        "reagent_hint": None,
+        "conditions": ["H2", "Pd/C", "MeOH", "rt"],
+        "category": "deprotection",
+    },
+    "ac_deprotection_o": {
+        "description": "Remove acetyl (Ac) from alcohol",
+        "smarts": "[O;R0:1][C;R0](=O)[C;H3]>>[O:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Ac-protected alcohol",
+        "reagent_hint": None,
+        "conditions": ["K2CO3", "MeOH", "rt"],
+        "category": "deprotection",
+    },
+    "ac_deprotection_n": {
+        "description": "Remove acetyl (Ac) from amine",
+        "smarts": "[NX3;H0,H1:1][C;R0](=O)[C;H3]>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Ac-protected amine",
+        "reagent_hint": None,
+        "conditions": ["6M HCl", "reflux"],
+        "category": "deprotection",
+    },
+    "pmb_deprotection": {
+        "description": "Remove PMB (para-methoxybenzyl) from alcohol",
+        "smarts":
+            "[c;H1]1[c;H1]c(O[C;H3])[c;H1][c;H1]c1"
+            "[C;H2][O;D2&R0:1]>>[O;H1:1]",
+        "n_reactants": 1,
+        "substrate_hint": "PMB-protected alcohol",
+        "reagent_hint": None,
+        "conditions": ["DDQ", "DCM/H2O", "rt"],
+        "category": "deprotection",
+    },
+    "ts_deprotection": {
+        "description": "Remove tosyl (Ts) from amine",
+        "smarts":
+            "[C;H3]c1[c;H1][c;H1]c(S(=O)(=O)"
+            "[NX3;H0,H1;!$(NC=O):1])[c;H1][c;H1]1>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "Ts-protected amine",
+        "reagent_hint": None,
+        "conditions": ["Mg", "MeOH", "sonication"],
+        "category": "deprotection",
+    },
+    "tfa_deprotection": {
+        "description": "Remove trifluoroacetyl (TFA) from amine",
+        "smarts": "[N;H0,H1:1]C(=O)C(F)(F)F>>[N:1]",
+        "n_reactants": 1,
+        "substrate_hint": "TFA-protected amine",
+        "reagent_hint": None,
+        "conditions": ["K2CO3", "MeOH/H2O", "rt"],
+        "category": "deprotection",
+    },
+    # --- Protection templates (reversed deprotection SMARTS, unimolecular) ---
+    "cbz_protection": {
+        "description": "Add Cbz (carbobenzyloxy) to amine",
+        "smarts": "[NX3;H1,H2:1]>>[N:1]C(=O)OCc1ccccc1",
+        "n_reactants": 1,
+        "substrate_hint": "free amine",
+        "reagent_hint": None,
+        "conditions": ["CbzCl", "NaOH", "dioxane/H2O", "0 \u00b0C"],
+        "category": "protection",
+    },
+    "fmoc_protection": {
+        "description": "Add Fmoc (9-fluorenylmethyloxycarbonyl) to amine",
+        "smarts":
+            "[NX3;H1,H2:1]>>[N:1]C(=O)OCC1c2ccccc2-c2ccccc21",
+        "n_reactants": 1,
+        "substrate_hint": "free amine",
+        "reagent_hint": None,
+        "conditions": ["Fmoc-OSu", "NaHCO3", "dioxane/H2O", "rt"],
+        "category": "protection",
+    },
+    "tbs_protection": {
+        "description": "Add TBS (tert-butyldimethylsilyl) to alcohol",
+        "smarts": "[O;H1:1]>>[O:1][Si](C)(C)C(C)(C)C",
+        "n_reactants": 1,
+        "substrate_hint": "free alcohol",
+        "reagent_hint": None,
+        "conditions": ["TBSCl", "imidazole", "DMF", "rt"],
+        "category": "protection",
+    },
+    "bn_protection_o": {
+        "description": "Add benzyl (Bn) to alcohol",
+        "smarts": "[O;H1:1]>>[O:1]Cc1ccccc1",
+        "n_reactants": 1,
+        "substrate_hint": "free alcohol",
+        "reagent_hint": None,
+        "conditions": ["BnBr", "NaH", "DMF", "0 \u00b0C"],
+        "category": "protection",
+    },
+    "bn_protection_n": {
+        "description": "Add benzyl (Bn) to amine",
+        "smarts": "[NX3;H1,H2;!$(NC=O):1]>>[N:1]Cc1ccccc1",
+        "n_reactants": 1,
+        "substrate_hint": "free amine",
+        "reagent_hint": None,
+        "conditions": ["BnBr", "K2CO3", "DMF", "60 \u00b0C"],
+        "category": "protection",
+    },
+    "ac_protection_o": {
+        "description": "Add acetyl (Ac) to alcohol",
+        "smarts": "[O;H1:1]>>[O:1]C(C)=O",
+        "n_reactants": 1,
+        "substrate_hint": "free alcohol",
+        "reagent_hint": None,
+        "conditions": ["Ac2O", "pyridine", "rt"],
+        "category": "protection",
+    },
+    "ac_protection_n": {
+        "description": "Add acetyl (Ac) to amine",
+        "smarts": "[NX3;H1,H2:1]>>[N:1]C(C)=O",
+        "n_reactants": 1,
+        "substrate_hint": "free amine",
+        "reagent_hint": None,
+        "conditions": ["Ac2O", "Et3N", "DCM", "rt"],
+        "category": "protection",
+    },
+    "pmb_protection": {
+        "description": "Add PMB (para-methoxybenzyl) to alcohol",
+        "smarts": "[O;H1:1]>>[O:1]Cc1ccc(OC)cc1",
+        "n_reactants": 1,
+        "substrate_hint": "free alcohol",
+        "reagent_hint": None,
+        "conditions": ["PMBCl", "NaH", "DMF", "0 \u00b0C"],
+        "category": "protection",
+    },
+    "ts_protection": {
+        "description": "Add tosyl (Ts) to amine",
+        "smarts":
+            "[NX3;H1,H2;!$(NC=O):1]>>[N:1]S(=O)(=O)c1ccc(C)cc1",
+        "n_reactants": 1,
+        "substrate_hint": "free amine",
+        "reagent_hint": None,
+        "conditions": ["TsCl", "Et3N", "DCM", "0 \u00b0C"],
+        "category": "protection",
+    },
 }
 
 
 # ---------------------------------------------------------------------------
-# Dynamic loading of ring-forming heterocyclic templates from datamol
+# Dynamic loading of reaction templates from datamol
 # ---------------------------------------------------------------------------
 
 _datamol_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
 
+def _category_from_tags(tags: set) -> str:
+    """Derive a template category from datamol tags."""
+    if tags & {"heterocycle formation", "cyclization", "ring formation"}:
+        return "heterocycle_formation"
+    if tags & {"amide coupling", "amide"}:
+        return "coupling"
+    # Datamol uses "protecting group", also match "protection"/"deprotection"
+    if tags & {"protecting group", "protection", "deprotection"}:
+        # Distinguish protection vs deprotection by tag name
+        tag_lc = {t.lower() for t in tags}
+        if any("deprotect" in t for t in tag_lc):
+            return "deprotection"
+        if any("protect" in t for t in tag_lc):
+            return "protection"
+        return "protecting_group"
+    if tags & {"C-C bond formation", "C-N bond formation",
+               "C-O bond formation", "C-S bond formation",
+               "N-arylation", "O-arylation", "S-arylation"}:
+        return "coupling"
+    return "functional_group"
+
+
 def _load_datamol_templates() -> Dict[str, Dict[str, Any]]:
-    """Load ring-forming heterocyclic reaction templates from datamol JSON.
+    """Load all reaction templates from datamol JSON.
 
     Reads ``reactions_datamol.json`` (127 curated reaction templates from
-    the datamol project, Apache 2.0) and extracts those tagged as
-    heterocycle formation / cyclization.  Each entry is converted to our
-    standard template format with snake_case keys.
+    the datamol project, Apache 2.0) and converts each entry to our
+    standard template format with snake_case keys.  Includes heterocycle
+    formation, couplings, functional group transforms, ester/amide
+    chemistry, protection/deprotection, and more.
 
     Returns:
         Dict mapping template name to template dict.
@@ -1222,7 +1642,7 @@ def _load_datamol_templates() -> Dict[str, Dict[str, Any]]:
 
     json_path = os.path.join(os.path.dirname(__file__), "reactions_datamol.json")
     if not os.path.exists(json_path):
-        logger.warning("reactions_datamol.json not found — ring-forming "
+        logger.warning("reactions_datamol.json not found — datamol "
                         "templates unavailable")
         _datamol_cache = {}
         return _datamol_cache
@@ -1230,16 +1650,14 @@ def _load_datamol_templates() -> Dict[str, Dict[str, Any]]:
     with open(json_path, encoding="utf-8") as fh:
         raw = json.load(fh)
 
-    ring_tags = {"heterocycle formation", "cyclization", "ring formation"}
     templates: Dict[str, Dict[str, Any]] = {}
 
     for key, entry in raw.items():
-        tags = set(entry.get("tags", []))
-        if not tags & ring_tags:
-            continue
         syn_smarts = entry.get("syn_smarts", "")
         if not syn_smarts:
             continue
+
+        tags = set(entry.get("tags", []))
 
         # Derive template name: JSON key is already kebab-case
         # Convert to snake_case for consistency
@@ -1268,25 +1686,26 @@ def _load_datamol_templates() -> Dict[str, Dict[str, Any]]:
                              if n_reactants > 1 and len(entry.get("rhs_classes", [])) > 1
                              else None),
             "conditions": [],  # literature conditions vary
-            "category": "heterocycle_formation",
-            "tags": list(tags & ring_tags),
+            "category": _category_from_tags(tags),
+            "tags": list(tags),
             "source": "datamol",
         }
 
     _datamol_cache = templates
-    logger.debug("Loaded %d ring-forming templates from datamol", len(templates))
+    logger.debug("Loaded %d templates from datamol", len(templates))
     return _datamol_cache
 
 
-# Merged registry: classic hand-written + datamol ring-forming
+# Merged registry: classic hand-written + all datamol templates
 _merged_templates: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 def _get_reaction_templates() -> Dict[str, Dict[str, Any]]:
     """Return the merged reaction template registry (lazy-loaded).
 
-    Classic hand-written templates (couplings, functional group transforms)
-    are merged with ~60 ring-forming heterocyclic templates from datamol.
+    Classic hand-written templates (couplings, functional group transforms,
+    protection/deprotection) are merged with all datamol templates
+    (heterocycle formation, couplings, FG transforms, and more).
     Classic templates take priority on name collisions.
     """
     global _merged_templates
@@ -1384,6 +1803,12 @@ def apply_reaction(reaction_name: str,
     # Look up template
     templates = _get_reaction_templates()
     tmpl = templates.get(reaction_name)
+    # Case-insensitive fallback
+    if tmpl is None:
+        lower_map = {k.lower(): k for k in templates}
+        real_key = lower_map.get(reaction_name.lower())
+        if real_key:
+            tmpl = templates[real_key]
     if tmpl is None:
         available = ", ".join(sorted(templates.keys()))
         return {
@@ -1479,11 +1904,74 @@ def apply_reaction(reaction_name: str,
 # Tool 9: deprotect
 # ---------------------------------------------------------------------------
 
+def _detect_deprotection_templates(mol) -> List[str]:
+    """Return names of all deprotection templates that fire on *mol*.
+
+    Used internally by :func:`deprotect` to route single-PG cases through
+    :func:`apply_reaction` and multi-PG (or unrecognised) cases through
+    RDKit's ``rdDeprotect`` library.
+
+    Args:
+        mol: RDKit ``Mol`` object.
+
+    Returns:
+        List of template names (from the merged registry) whose SMARTS
+        match at least one site on *mol*.
+    """
+    from rdkit.Chem import AllChem
+
+    templates = _get_reaction_templates()
+    fired: List[str] = []
+    for name, tmpl in templates.items():
+        if tmpl.get("category") not in ("deprotection",):
+            continue
+        if tmpl.get("n_reactants", 1) != 1:
+            continue
+        try:
+            rxn = AllChem.ReactionFromSmarts(tmpl["smarts"])
+            if rxn.RunReactants((mol,)):
+                fired.append(name)
+        except Exception:
+            continue
+    return fired
+
+
+# Map from apply_reaction template name to PG abbreviation used in the
+# ``removed`` list that callers expect.  Keeps the public return format
+# stable even when template names are refactored.
+_TEMPLATE_TO_PG_ABBREV: Dict[str, str] = {
+    "BOC_deprotection": "Boc",
+    "cbz_deprotection": "Cbz",
+    "fmoc_deprotection": "Fmoc",
+    "tbs_deprotection": "TBS",
+    "bn_deprotection_o": "Bn",
+    "bn_deprotection_n": "Bn",
+    "ac_deprotection_o": "Ac",
+    "ac_deprotection_n": "Ac",
+    "pmb_deprotection": "PMB",
+    "ts_deprotection": "Ts",
+    "tfa_deprotection": "TFA",
+}
+
+
 def deprotect(smiles: str) -> Dict[str, Any]:
     """Remove common protecting groups from a molecule.
 
-    Uses RDKit's built-in deprotection library (25 templates covering
-    Boc, Fmoc, Cbz, TBS, THP, Bn, Ac, PMB, Tr, and more).
+    For substrates carrying a **single recognisable protecting group**,
+    this function delegates to :func:`apply_reaction` using the
+    appropriate named template (e.g. ``"BOC_deprotection"``,
+    ``"fmoc_deprotection"``).  This keeps the deprotection logic
+    centralised in the reaction-template registry and makes the
+    single-PG path available to agents via :func:`apply_reaction`
+    directly.
+
+    For substrates with **multiple protecting groups**, or when the PG is
+    not covered by the named-template registry, the function falls back to
+    RDKit's built-in ``rdDeprotect`` library (25+ templates covering Boc,
+    Fmoc, Cbz, TBS, THP, Bn, Ac, PMB, Tr, and more).
+
+    The return format is identical in all cases, so existing callers are
+    unaffected.
 
     Args:
         smiles: SMILES of the protected molecule.
@@ -1497,6 +1985,12 @@ def deprotect(smiles: str) -> Dict[str, Any]:
         >>> deprotect("O=C(OC(C)(C)C)Nc1ccccc1")  # Boc-aniline
         {'ok': True, 'product_smiles': 'Nc1ccccc1', 'product_name': 'aniline',
          'removed': ['Boc']}
+
+    Note:
+        Single-PG deprotections can also be called directly via
+        :func:`apply_reaction`, e.g.
+        ``apply_reaction("BOC_deprotection", smiles)``.  Use that form
+        when you know the specific protecting group in advance.
     """
     from rdkit import Chem
 
@@ -1510,11 +2004,52 @@ def deprotect(smiles: str) -> Dict[str, Any]:
 
     original_smi = Chem.MolToSmiles(mol)
 
+    # --- Fast path: exactly one named template fires → delegate to apply_reaction ---
+    fired = _detect_deprotection_templates(mol)
+    if len(fired) == 1:
+        tname = fired[0]
+        ar_result = apply_reaction(tname, original_smi)
+        if ar_result.get("ok") and ar_result.get("products"):
+            product_smi = ar_result["products"][0]["smiles"]
+            pg_abbrev = _TEMPLATE_TO_PG_ABBREV.get(tname, tname)
+            return {
+                "ok": True,
+                "product_smiles": product_smi,
+                "product_name": _smiles_to_name_cs(product_smi),
+                "removed": [pg_abbrev],
+            }
+        # apply_reaction unexpectedly failed — fall through to rdDeprotect
+
+    # --- Fallback: rdDeprotect handles multiple PGs or unrecognised ones ---
     try:
         from rdkit.Chem import rdDeprotect
         result = rdDeprotect.Deprotect(mol)
     except ImportError:
-        return {"ok": False, "error": "rdDeprotect not available in this RDKit build."}
+        if fired:
+            # rdDeprotect unavailable but we know which PG(s) to remove —
+            # run apply_reaction for each in sequence
+            current_smi = original_smi
+            removed_abbrevs: List[str] = []
+            for tname in fired:
+                ar = apply_reaction(tname, current_smi)
+                if ar.get("ok") and ar.get("products"):
+                    current_smi = ar["products"][0]["smiles"]
+                    removed_abbrevs.append(_TEMPLATE_TO_PG_ABBREV.get(tname, tname))
+            if removed_abbrevs:
+                return {
+                    "ok": True,
+                    "product_smiles": current_smi,
+                    "product_name": _smiles_to_name_cs(current_smi),
+                    "removed": removed_abbrevs,
+                }
+        return {
+            "ok": False,
+            "error": (
+                "rdDeprotect not available in this RDKit build. "
+                "Use apply_reaction() with a specific template name "
+                "(e.g. 'BOC_deprotection') for single-PG removal."
+            ),
+        }
     except Exception as exc:
         return {"ok": False, "error": f"Deprotection failed: {exc}"}
 
@@ -1529,13 +2064,13 @@ def deprotect(smiles: str) -> Dict[str, Any]:
             "note": "No protecting groups detected.",
         }
 
-    # Identify which PGs were removed by checking each template
+    # Identify which PGs were removed by checking each rdDeprotect template
     removed = []
     try:
+        from rdkit.Chem import AllChem
         deprots = rdDeprotect.GetDeprotections()
         for d in deprots:
             rxn_sma = d.reaction_smarts
-            from rdkit.Chem import AllChem
             rxn = AllChem.ReactionFromSmarts(rxn_sma)
             try:
                 prods = rxn.RunReactants((mol,))
@@ -1566,6 +2101,845 @@ def deprotect(smiles: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Tool 10: draw_molecule
+# ---------------------------------------------------------------------------
+
+def draw_molecule(
+    mol_json: Dict[str, Any],
+    output_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Render a single molecule to a standalone CDXML document.
+
+    Takes a molecule dict (as returned by ``resolve_compound`` or any dict
+    containing at minimum a ``smiles`` field) and generates a CDXML string
+    suitable for opening directly in ChemDraw.  No arrow, no reaction scheme —
+    just the structure, centred on a page.
+
+    An optional text label (compound name or custom label) is placed below the
+    structure when the input dict contains a ``label``, ``name``, or
+    ``iupac_name`` field (checked in that priority order).
+
+    Args:
+        mol_json: Dict with at minimum ``"smiles"``.  Optional display keys:
+            ``"label"`` (used verbatim), ``"name"``, ``"iupac_name"``.
+            Any other fields are ignored.
+        output_path: If given, the CDXML string is also written to this file
+            path.
+
+    Returns:
+        Dict with keys:
+
+        - ``ok``: bool
+        - ``cdxml``: CDXML document string (on success)
+        - ``output_path``: echoed path if *output_path* was specified
+        - ``error``: error message (when ``ok=False``)
+
+    Example::
+
+        >>> result = draw_molecule({"smiles": "CC(=O)Oc1ccccc1C(=O)O",
+        ...                         "name": "aspirin"})
+        >>> result["ok"]
+        True
+        >>> result["cdxml"][:20]
+        '<?xml version="1.0"'
+    """
+    # --- Validate input ---
+    smiles = mol_json.get("smiles")
+    if not smiles:
+        return {"ok": False, "error": "mol_json must contain a 'smiles' field."}
+
+    # --- Resolve display label (priority: label > name > iupac_name) ---
+    label: Optional[str] = (
+        mol_json.get("label")
+        or mol_json.get("name")
+        or mol_json.get("iupac_name")
+    )
+
+    # --- Import renderer internals (lazy — avoids import-time cost) ---
+    try:
+        from cdxml_toolkit.render.renderer import (
+            _IDGen,
+            _smiles_to_fragment_data,
+            _build_fragment,
+            _build_text_element,
+            _fragment_bbox,
+            _bbox_center,
+            _shift_atoms,
+        )
+    except ImportError as exc:
+        return {"ok": False, "error": f"Renderer not available: {exc}"}
+
+    from cdxml_toolkit.constants import (
+        CDXML_FOOTER,
+        CDXML_HEADER,
+        ACS_LABEL_FONT,
+        ACS_LABEL_SIZE,
+        ACS_LABEL_FACE,
+        ACS_CAPTION_SIZE,
+        ACS_HASH_SPACING,
+        ACS_MARGIN_WIDTH,
+        ACS_LINE_WIDTH,
+        ACS_BOLD_WIDTH,
+        ACS_BOND_LENGTH_STR,
+        ACS_BOND_SPACING,
+        ACS_CHAIN_ANGLE_STR,
+    )
+
+    # --- Generate 2D coordinates ---
+    CENTER_X, CENTER_Y = 200.0, 200.0
+
+    result = _smiles_to_fragment_data(smiles, CENTER_X, CENTER_Y)
+    if result is None:
+        return {
+            "ok": False,
+            "error": f"Could not generate 2D coordinates for SMILES: {smiles!r}",
+        }
+
+    atoms, bonds = result
+
+    # Re-centre the structure at the desired origin
+    bbox = _fragment_bbox(atoms)
+    cx, cy = _bbox_center(bbox)
+    _shift_atoms(atoms, CENTER_X - cx, CENTER_Y - cy)
+    bbox = _fragment_bbox(atoms)
+
+    # --- Build XML ---
+    ids = _IDGen(1000)
+    frag_xml, _, _ = _build_fragment(atoms, bonds, ids)
+
+    xml_parts = [frag_xml]
+
+    # --- Optional label below the structure ---
+    if label:
+        label_y = bbox[3] + 14.0  # 14 pt below the structure bottom
+        lbl_xml, _ = _build_text_element(
+            [label], CENTER_X, label_y, ids,
+            justification="Center", use_formatting=False,
+        )
+        xml_parts.append(lbl_xml)
+
+    inner_xml = "\n".join(xml_parts)
+
+    # --- Wrap in CDXML document ---
+    page_id = ids.next()
+
+    header = CDXML_HEADER.format(
+        bbox="0 0 1620 2160",
+        label_font=ACS_LABEL_FONT,
+        label_size=ACS_LABEL_SIZE,
+        label_face=ACS_LABEL_FACE,
+        caption_size=ACS_CAPTION_SIZE,
+        hash_spacing=ACS_HASH_SPACING,
+        margin_width=ACS_MARGIN_WIDTH,
+        line_width=ACS_LINE_WIDTH,
+        bold_width=ACS_BOLD_WIDTH,
+        bond_length=ACS_BOND_LENGTH_STR,
+        bond_spacing=ACS_BOND_SPACING,
+        chain_angle=ACS_CHAIN_ANGLE_STR,
+    )
+
+    page_open = (
+        f'<page id="{page_id}" BoundingBox="0 0 1620 2160" '
+        f'HeaderPosition="36" FooterPosition="36" '
+        f'PrintTrimMarks="yes" HeightPages="3" WidthPages="3">'
+    )
+
+    cdxml = "\n".join([header, page_open, inner_xml, "</page>", CDXML_FOOTER])
+
+    # --- Write to file if requested ---
+    ret: Dict[str, Any] = {"ok": True, "cdxml": cdxml}
+    if output_path:
+        try:
+            with open(output_path, "w", encoding="utf-8") as fh:
+                fh.write(cdxml)
+            ret["output_path"] = output_path
+        except OSError as exc:
+            return {"ok": False, "error": f"Failed to write '{output_path}': {exc}"}
+
+    return ret
+
+
+# ---------------------------------------------------------------------------
+# Tool 11: modify_molecule
+# ---------------------------------------------------------------------------
+
+def _compute_formula(smiles: str) -> Optional[str]:
+    """Get molecular formula string from SMILES using RDKit."""
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import rdMolDescriptors
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        return rdMolDescriptors.CalcMolFormula(mol)
+    except Exception:
+        return None
+
+
+def _compute_mw(smiles: str) -> Optional[float]:
+    """Get exact molecular weight (monoisotopic) from SMILES using RDKit."""
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import Descriptors
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        return round(Descriptors.ExactMolWt(mol), 4)
+    except Exception:
+        return None
+
+
+def _parse_formula_counts(formula: str) -> Dict[str, int]:
+    """Parse a molecular formula string into element counts.
+
+    Handles simple formulas like ``C26H26N8O3``.  Returns a dict mapping
+    element symbol to count.
+    """
+    counts: Dict[str, int] = {}
+    for sym, n in re.findall(r"([A-Z][a-z]?)(\d*)", formula):
+        if sym:
+            counts[sym] = counts.get(sym, 0) + (int(n) if n else 1)
+    return counts
+
+
+def _delta_formula(formula_in: str, formula_out: str) -> str:
+    """Compute element-by-element formula difference as a compact string.
+
+    Example: ``C20H20`` to ``C26H26`` gives ``+C6H6``.
+    Returns a string like ``"+C6H4, -D3"`` or ``"(no change)"``.
+    """
+    counts_in = _parse_formula_counts(formula_in)
+    counts_out = _parse_formula_counts(formula_out)
+
+    all_elems = sorted(set(list(counts_in.keys()) + list(counts_out.keys())))
+    added: List[str] = []
+    removed: List[str] = []
+
+    for elem in all_elems:
+        n_in = counts_in.get(elem, 0)
+        n_out = counts_out.get(elem, 0)
+        delta = n_out - n_in
+        if delta > 0:
+            added.append(f"{elem}{delta if delta > 1 else ''}")
+        elif delta < 0:
+            removed.append(f"{elem}{abs(delta) if abs(delta) > 1 else ''}")
+
+    parts = []
+    if added:
+        parts.append("+" + "".join(added))
+    if removed:
+        parts.append("-" + "".join(removed))
+    return ", ".join(parts) if parts else "(no change)"
+
+
+def _build_mol_diff(input_smiles: str, output_smiles: str) -> Dict[str, Any]:
+    """Build the ``diff`` sub-dict using MCS + formula comparison."""
+    diff: Dict[str, Any] = {
+        "atoms_added": [],
+        "atoms_removed": [],
+        "atoms_changed": [],
+        "mcs_smarts": None,
+        "delta_formula": None,
+        "delta_mw": None,
+    }
+
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import rdFMCS
+        from cdxml_toolkit.naming.aligned_namer import molecular_diff
+
+        md = molecular_diff(input_smiles, output_smiles)
+
+        if not md.fallback_used:
+            try:
+                sm_mol = Chem.MolFromSmiles(input_smiles)
+                prod_mol = Chem.MolFromSmiles(output_smiles)
+                if sm_mol and prod_mol:
+                    mcs = rdFMCS.FindMCS(
+                        [sm_mol, prod_mol],
+                        threshold=1.0,
+                        ringMatchesRingOnly=True,
+                        completeRingsOnly=True,
+                        atomCompare=rdFMCS.AtomCompare.CompareElements,
+                        bondCompare=rdFMCS.BondCompare.CompareOrder,
+                        timeout=5,
+                    )
+                    if not mcs.canceled and mcs.numAtoms >= 3:
+                        diff["mcs_smarts"] = mcs.smartsString
+            except Exception:
+                pass
+
+        for ch in md.changes:
+            if ch.change_type == "addition":
+                diff["atoms_added"].append(ch.prod_name)
+            elif ch.change_type == "removal":
+                diff["atoms_removed"].append(ch.sm_name)
+            elif ch.change_type == "replace":
+                diff["atoms_changed"].append(
+                    {"from": ch.sm_name, "to": ch.prod_name}
+                )
+    except Exception:
+        pass
+
+    # Formula and MW delta (always computed — does not need MCS)
+    formula_in = _compute_formula(input_smiles)
+    formula_out = _compute_formula(output_smiles)
+    mw_in = _compute_mw(input_smiles)
+    mw_out = _compute_mw(output_smiles)
+
+    if formula_in and formula_out:
+        diff["delta_formula"] = _delta_formula(formula_in, formula_out)
+    if mw_in is not None and mw_out is not None:
+        diff["delta_mw"] = round(mw_out - mw_in, 4)
+
+    return diff
+
+
+def _build_aligned_names(input_smiles: str, output_smiles: str) -> str:
+    """Build an aligned name comparison string for two SMILES.
+
+    Returns a string like ``"X \u2192 Y\\n  changes: ..."``.
+    Falls back to a simple ``"name1 \u2192 name2"`` via ChemScript.
+    """
+    try:
+        from cdxml_toolkit.naming.aligned_namer import (
+            find_aligned_names, format_name_diff,
+        )
+        ar = find_aligned_names(input_smiles, output_smiles)
+        if ar.best_sm_name and ar.best_prod_name:
+            diff_str = format_name_diff(ar.best_sm_name, ar.best_prod_name)
+            return (
+                f"{ar.best_sm_name} \u2192 {ar.best_prod_name}"
+                f"\n  changes: {diff_str}"
+            )
+    except Exception:
+        pass
+
+    n1 = _smiles_to_name_cs(input_smiles) or ""
+    n2 = _smiles_to_name_cs(output_smiles) or ""
+    if n1 and n2:
+        return f"{n1} \u2192 {n2}"
+    return ""
+
+
+def modify_molecule(mol_json: Dict[str, Any],
+                    operation: str,
+                    **kwargs: Any) -> Dict[str, Any]:
+    """Modify a molecule and verify the change with a structural diff.
+
+    This is the molecular editor for LLM orchestration.  It takes a
+    molecule (as a dict with at least a ``smiles`` key), applies an
+    operation, and returns the modified molecule with a structural diff
+    so the LLM can verify the change happened as intended.
+
+    Parameters
+    ----------
+    mol_json : dict
+        Source molecule dict.  Must contain ``smiles`` (canonical SMILES).
+        May also contain ``name`` or ``iupac_name`` for display.
+    operation : str
+        One of:
+
+        - ``"analyze"`` — inspect the molecule without modifying it.
+          Returns functional groups, alternative IUPAC names, bracket
+          tree, prefix form, formula, and MW.  No additional kwargs.
+
+        - ``"name_surgery"`` — modify via IUPAC name manipulation.
+          Additional kwargs:
+
+          - ``add``: list of ``{"locant": str, "prefix": str}`` dicts
+          - ``remove``: list of prefix strings to remove
+
+        - ``"smarts"`` — apply a SMARTS reaction transform.
+          Additional kwargs:
+
+          - ``smarts``: reaction SMARTS string, e.g. ``"[c:1][F]>>[c:1][Cl]"``
+          - ``reaction_name``: name from ``list_reactions()`` (alternative)
+
+        - ``"set_smiles"`` — accept new SMILES from the LLM.
+          Additional kwargs:
+
+          - ``new_smiles``: str (validated with RDKit)
+          - ``description``: str (optional, for context)
+
+        - ``"reaction"`` — apply a named reaction template (calls
+          ``apply_reaction()`` internally).  Additional kwargs:
+
+          - ``reaction_name``: str (required) — template from ``list_reactions()``
+          - ``reagent``: dict with ``smiles`` key (for binary reactions)
+
+    Returns
+    -------
+    dict
+        For ``"analyze"`` operation:
+
+        - ``ok``: bool
+        - ``input_smiles``: canonical SMILES of input
+        - ``canonical_name``: IUPAC name (from ChemScript, or empty)
+        - ``alternative_names``: list of alternative IUPAC names (round-trip
+          validated) showing different parent/substituent perspectives
+        - ``functional_groups``: list of functional group names present
+          (e.g. ``["aryl chloride", "pyridine", "amide"]``)
+        - ``prefix_form``: IUPAC prefix if this could be a substituent, or
+          ``None``
+        - ``bracket_tree``: the canonical IUPAC name with its bracket
+          hierarchy preserved (same as ``canonical_name``); the caller can
+          parse parenthesised groups to see substituents at each depth
+        - ``formula``: molecular formula string
+        - ``mw``: exact monoisotopic MW (float)
+
+        For modification operations (``"name_surgery"``, ``"smarts"``,
+        ``"set_smiles"``):
+
+        - ``ok``: bool
+        - ``input_smiles``: canonical SMILES of input
+        - ``output_smiles``: canonical SMILES of output
+        - ``input_name``: IUPAC name of input
+        - ``output_name``: IUPAC name of output (from ChemScript)
+        - ``aligned_names``: side-by-side aligned name comparison string
+        - ``diff``: sub-dict with:
+
+          - ``atoms_added``: list of fragment names added
+          - ``atoms_removed``: list of fragment names removed
+          - ``atoms_changed``: list of ``{"from": ..., "to": ...}`` dicts
+          - ``mcs_smarts``: maximum common substructure SMARTS (str or None)
+          - ``delta_formula``: formula difference (e.g. ``"+C6H5, -F"``)
+          - ``delta_mw``: MW difference in Da (float)
+
+        - ``formula``: molecular formula of output
+        - ``mw``: exact monoisotopic MW of output
+
+    Examples
+    --------
+    ::
+
+        # Swap a CD3 for benzyl via SMARTS
+        result = modify_molecule(
+            {"smiles": "C([2H])([2H])[2H]"},
+            "smarts",
+            smarts="[C:1]([2H])([2H])[2H]>>[C:1]Cc1ccccc1",
+        )
+
+        # Add a fluoro group via name surgery
+        result = modify_molecule(
+            {"smiles": "Clc1ccncc1"},
+            "name_surgery",
+            add=[{"locant": "3", "prefix": "fluoro"}],
+        )
+
+        # Directly set new SMILES and verify
+        result = modify_molecule(
+            {"smiles": "Clc1ccncc1"},
+            "set_smiles",
+            new_smiles="Clc1cc(F)ncc1",
+            description="added fluoro at C3",
+        )
+    """
+    from rdkit import Chem
+
+    # ---- Validate input ----
+    input_smiles_raw = mol_json.get("smiles", "")
+    if not input_smiles_raw:
+        return {"ok": False, "error": "mol_json must contain 'smiles'."}
+
+    in_mol = Chem.MolFromSmiles(input_smiles_raw)
+    if in_mol is None:
+        return {"ok": False,
+                "error": f"Could not parse input SMILES: '{input_smiles_raw}'."}
+    input_smiles = Chem.MolToSmiles(in_mol)
+
+    output_smiles: Optional[str] = None
+    alternative_products: List[Dict[str, Any]] = []
+
+    # ---- Dispatch operation ----
+    if operation == "set_smiles":
+        new_smiles = kwargs.get("new_smiles", "")
+        if not new_smiles:
+            return {"ok": False, "error": "'new_smiles' is required for set_smiles."}
+        out_mol = Chem.MolFromSmiles(new_smiles)
+        if out_mol is None:
+            return {"ok": False,
+                    "error": f"'new_smiles' is not a valid SMILES: '{new_smiles}'."}
+        output_smiles = Chem.MolToSmiles(out_mol)
+
+    elif operation == "smarts":
+        smarts_str = kwargs.get("smarts", "")
+        reaction_name = kwargs.get("reaction_name", "")
+
+        if reaction_name and not smarts_str:
+            templates = _get_reaction_templates()
+            tmpl = templates.get(reaction_name)
+            if tmpl is None:
+                return {"ok": False,
+                        "error": f"Unknown reaction_name '{reaction_name}'."}
+            smarts_str = tmpl["smarts"]
+
+        if not smarts_str:
+            return {"ok": False,
+                    "error": "'smarts' or 'reaction_name' is required for smarts."}
+
+        try:
+            from rdkit.Chem import AllChem
+            rxn = AllChem.ReactionFromSmarts(smarts_str)
+        except Exception as exc:
+            return {"ok": False, "error": f"Invalid reaction SMARTS: {exc}"}
+
+        try:
+            product_sets = rxn.RunReactants((in_mol,))
+        except Exception as exc:
+            return {"ok": False, "error": f"SMARTS reaction failed: {exc}"}
+
+        if not product_sets:
+            return {
+                "ok": False,
+                "error": (
+                    "SMARTS pattern did not match the input molecule. "
+                    "Check atom-map numbers and pattern."
+                ),
+                "input_smiles": input_smiles,
+            }
+
+        for prod_tuple in product_sets:
+            for prod in prod_tuple:
+                try:
+                    Chem.SanitizeMol(prod)
+                    output_smiles = Chem.MolToSmiles(prod)
+                    break
+                except Exception:
+                    continue
+            if output_smiles:
+                break
+
+        if not output_smiles:
+            return {"ok": False,
+                    "error": "SMARTS reaction produced no valid products."}
+
+    elif operation == "name_surgery":
+        iupac_name = (mol_json.get("iupac_name")
+                      or mol_json.get("name")
+                      or _smiles_to_name_cs(input_smiles))
+
+        if not iupac_name:
+            return {
+                "ok": False,
+                "error": (
+                    "name_surgery requires an IUPAC name.  "
+                    "Provide 'iupac_name' in mol_json, or ensure ChemScript "
+                    "is available to auto-generate one."
+                ),
+            }
+
+        add_list: List[Dict[str, str]] = kwargs.get("add", [])
+        remove_list: List[str] = kwargs.get("remove", [])
+
+        current_name = iupac_name
+
+        for prefix_to_remove in remove_list:
+            # Auto-resolve abbreviations to IUPAC prefix form
+            pfx_r = get_prefix_form(prefix_to_remove)
+            if pfx_r.get("ok"):
+                prefix_to_remove = pfx_r["prefix"]
+            res = _modify_remove(current_name, prefix_to_remove,
+                                 validate=True, use_network=False)
+            if not res.get("ok"):
+                return {
+                    "ok": False,
+                    "error": (f"name_surgery remove '{prefix_to_remove}' "
+                              f"failed: {res.get('error', '?')}"),
+                    "input_smiles": input_smiles,
+                    "tried_name": current_name,
+                }
+            if res.get("valid") and res.get("smiles"):
+                current_name = res["name"]
+            else:
+                return {
+                    "ok": False,
+                    "error": (f"name_surgery remove '{prefix_to_remove}' "
+                              f"produced invalid name: '{res.get('name')}'."),
+                    "input_smiles": input_smiles,
+                }
+
+        for sub in add_list:
+            prefix = sub.get("prefix", "")
+            locant = sub.get("locant", "")
+            if not prefix:
+                continue
+            # Auto-resolve abbreviations/formulae to IUPAC prefix form
+            # so the agent can say "CF3" instead of "trifluoromethyl".
+            pfx_result = get_prefix_form(prefix)
+            if pfx_result.get("ok"):
+                prefix = pfx_result["prefix"]
+            res = _modify_add(current_name, prefix, locant,
+                              validate=True, use_network=False)
+            if not res.get("ok"):
+                return {
+                    "ok": False,
+                    "error": (f"name_surgery add '{prefix}' at '{locant}' "
+                              f"failed: {res.get('error', '?')}"),
+                    "input_smiles": input_smiles,
+                    "tried_name": current_name,
+                }
+            if res.get("valid") and res.get("smiles"):
+                current_name = res["name"]
+            else:
+                return {
+                    "ok": False,
+                    "error": (f"name_surgery add '{prefix}' produced "
+                              f"invalid name: '{res.get('name')}'."),
+                    "input_smiles": input_smiles,
+                }
+
+        output_smiles = _try_validate(current_name, use_network=False)
+        if not output_smiles:
+            return {
+                "ok": False,
+                "error": f"Could not validate name surgery result: '{current_name}'.",
+                "input_smiles": input_smiles,
+                "output_name_attempted": current_name,
+            }
+        out_mol = Chem.MolFromSmiles(output_smiles)
+        if out_mol:
+            output_smiles = Chem.MolToSmiles(out_mol)
+
+    elif operation == "reaction":
+        # ---- Reaction: apply a named reaction template via apply_reaction ----
+        reaction_name = kwargs.get("reaction_name", "")
+        if not reaction_name:
+            rxn_list = list_reactions()
+            names = [r["name"] for r in rxn_list.get("reactions", [])]
+            return {
+                "ok": False,
+                "error": (
+                    "'reaction_name' is required for the reaction operation. "
+                    f"Available reactions: {', '.join(names)}"
+                ),
+                "input_smiles": input_smiles,
+            }
+
+        reagent_dict = kwargs.get("reagent", None)
+        reagent_smiles = reagent_dict.get("smiles") if isinstance(reagent_dict, dict) else None
+
+        rxn_result = apply_reaction(reaction_name, input_smiles, reagent_smiles)
+        if not rxn_result.get("ok"):
+            return {
+                "ok": False,
+                "error": rxn_result.get("error", "Reaction failed."),
+                "input_smiles": input_smiles,
+                "reaction_name": reaction_name,
+            }
+
+        products = rxn_result.get("products", [])
+        if not products:
+            return {
+                "ok": False,
+                "error": "Reaction produced no products.",
+                "input_smiles": input_smiles,
+                "reaction_name": reaction_name,
+            }
+
+        # Primary product is first; store remaining as alternatives
+        output_smiles = products[0]["smiles"]
+        alternative_products = products[1:] if len(products) > 1 else []
+
+    elif operation == "analyze":
+        # ---- Analyze: reason about a molecule without modifying it ----
+        # Functional group SMARTS (name → SMARTS pattern).
+        _FG_SMARTS: List[tuple] = [
+            # Halogens
+            ("aryl fluoride",        "[F][c]"),
+            ("aryl chloride",        "[Cl][c]"),
+            ("aryl bromide",         "[Br][c]"),
+            ("aryl iodide",          "[I][c]"),
+            ("alkyl fluoride",       "[F][CX4]"),
+            ("alkyl chloride",       "[Cl][CX4]"),
+            ("alkyl bromide",        "[Br][CX4]"),
+            ("alkyl iodide",         "[I][CX4]"),
+            # Nitrogen
+            ("primary amine",        "[NH2][CX4]"),
+            ("secondary amine",      "[NH1]([CX4])[CX4]"),
+            ("tertiary amine",       "[NX3;!$(N=*)]([CX4])([CX4])[CX4]"),
+            ("aromatic amine",       "[NH2][c]"),
+            ("amide",                "[CX3](=[OX1])[NX3]"),
+            ("sulfonamide",          "[SX4](=[OX1])(=[OX1])[NX3]"),
+            ("nitro",                "[$([NX3](=O)=O),$([NX3+](=O)[O-])]"),
+            ("nitrile",              "[CX2]#[NX1]"),
+            ("isocyanate",           "[NX2]=[C]=[OX1]"),
+            ("urea",                 "[NX3][CX3](=[OX1])[NX3]"),
+            ("carbamate",            "[NX3][CX3](=[OX1])[OX2]"),
+            # Oxygen
+            ("carboxylic acid",      "[CX3](=[OX1])[OX2H1]"),
+            ("ester",                "[CX3](=[OX1])[OX2][CX4]"),
+            ("ketone",               "[CX3](=[OX1])[CX4]"),
+            ("aldehyde",             "[CX3H1](=[OX1])"),
+            ("alcohol",              "[OX2H][CX4]"),
+            ("phenol",               "[OX2H][c]"),
+            ("ether",                "[OX2]([CX4])[CX4]"),
+            ("aryl ether",           "[OX2]([c])[CX4,c]"),
+            ("epoxide",              "[C]1[O][C]1"),
+            ("anhydride",            "[CX3](=[OX1])[OX2][CX3](=[OX1])"),
+            # Sulfur
+            ("thiol",                "[SX2H]"),
+            ("thioether",            "[SX2]([CX4])[CX4]"),
+            ("sulfoxide",            "[$([SX3]=O)]"),
+            ("sulfone",              "[$([SX4](=[OX1])(=[OX1]))]"),
+            # Phosphorus
+            ("phosphate",            "[PX4](=[OX1])([OX2])([OX2])[OX2]"),
+            ("phosphonic acid",      "[PX4](=[OX1])([OX2H])([OX2H])"),
+            # Boron
+            ("boronic acid",         "[BX3]([OX2H])[OX2H]"),
+            ("boronate ester",       "[BX3]([OX2])[OX2]"),
+            # Heterocycles (aromatic)
+            ("pyridine",             "c1ccncc1"),
+            ("pyrimidine",           "c1cnccn1"),
+            ("pyrazine",             "c1cnccn1"),
+            ("imidazole",            "c1cnc[nH]1"),
+            ("pyrazole",             "c1cc[nH]n1"),
+            ("triazole",             "c1cn[nH]n1"),
+            ("tetrazole",            "c1nnn[nH]1"),
+            ("oxazole",              "c1cocn1"),
+            ("thiazole",             "c1cscn1"),
+            ("indole",               "c1ccc2[nH]ccc2c1"),
+            ("benzimidazole",        "c1cnc2ccccc2n1"),
+            ("quinoline",            "c1ccc2ncccc2c1"),
+            ("isoquinoline",         "c1ccc2cnccc2c1"),
+            ("piperidine",           "[NH]1CCCCC1"),
+            ("piperazine",           "N1CCNCC1"),
+            ("morpholine",           "O1CCNCC1"),
+            ("pyrrolidine",          "[NH]1CCCC1"),
+            ("azetidine",            "[NH]1CCC1"),
+            # Protected amines
+            ("Boc-protected amine",  "[NX3][CX3](=[OX1])OC(C)(C)C"),
+            ("Cbz-protected amine",  "[NX3][CX3](=[OX1])OCc1ccccc1"),
+            ("Fmoc-protected amine", "[NX3][CX3](=[OX1])OCC1c2ccccc2-c2ccccc21"),
+        ]
+
+        # Remove any broken SMARTS (the sulfone pattern has a typo guard)
+        valid_fg_patterns: List[tuple] = []
+        for fg_name, fg_smarts in _FG_SMARTS:
+            try:
+                from rdkit.Chem import MolFromSmarts
+                patt = MolFromSmarts(fg_smarts)
+                if patt is not None:
+                    valid_fg_patterns.append((fg_name, patt))
+            except Exception:
+                pass
+
+        # Detect functional groups
+        functional_groups: List[str] = []
+        for fg_name, patt in valid_fg_patterns:
+            if in_mol.HasSubstructMatch(patt):
+                functional_groups.append(fg_name)
+
+        # Get canonical IUPAC name from ChemScript
+        canonical_name = _smiles_to_name_cs(input_smiles) or ""
+
+        # Get decomposition (alternatives + bracket tree)
+        alternative_names: List[str] = []
+        bracket_tree_str: Optional[str] = None
+        try:
+            from cdxml_toolkit.naming.name_decomposer import decompose_name
+            decomp = decompose_name(input_smiles)
+            if decomp.alternatives:
+                alternative_names = [a.name for a in decomp.alternatives
+                                     if a.valid and a.name]
+            if decomp.bracket_tree is not None:
+                bracket_tree_str = decomp.canonical_name
+            if not canonical_name and decomp.canonical_name:
+                canonical_name = decomp.canonical_name
+        except Exception:
+            pass
+
+        # Get prefix form (substituent name)
+        prefix_form: Optional[str] = None
+        try:
+            pfx_result = get_prefix_form(canonical_name or input_smiles)
+            if pfx_result.get("ok"):
+                prefix_form = pfx_result["prefix"]
+        except Exception:
+            pass
+
+        formula = _compute_formula(input_smiles)
+        mw_val = _compute_mw(input_smiles)
+
+        return {
+            "ok": True,
+            "input_smiles": input_smiles,
+            "canonical_name": canonical_name,
+            "alternative_names": alternative_names,
+            "functional_groups": functional_groups,
+            "prefix_form": prefix_form,
+            "bracket_tree": bracket_tree_str,
+            "formula": formula,
+            "mw": mw_val,
+        }
+
+    elif operation == "set_name":
+        # ---- Set name: resolve a new IUPAC name to SMILES, validate, diff ----
+        new_name = kwargs.get("new_name", "")
+        if not new_name:
+            return {"ok": False, "error": "'new_name' is required for set_name."}
+
+        # Try to resolve the name to SMILES
+        output_smiles = _try_validate(new_name, use_network=True)
+        if not output_smiles:
+            # Also try resolve_to_smiles in case it's a common name
+            r = resolve_to_smiles(new_name, use_network=True)
+            if r.get("ok"):
+                output_smiles = r["smiles"]
+
+        if not output_smiles:
+            return {
+                "ok": False,
+                "error": f"Could not resolve name '{new_name}' to a valid structure.",
+                "input_smiles": input_smiles,
+            }
+        out_mol = Chem.MolFromSmiles(output_smiles)
+        if out_mol is None:
+            return {
+                "ok": False,
+                "error": f"Name '{new_name}' resolved but SMILES is invalid.",
+                "input_smiles": input_smiles,
+            }
+        output_smiles = Chem.MolToSmiles(out_mol)
+
+    else:
+        return {
+            "ok": False,
+            "error": (f"Unknown operation '{operation}'. "
+                      "Use 'analyze', 'name_surgery', 'smarts', "
+                      "'set_smiles', 'set_name', or 'reaction'."),
+        }
+
+    # ---- Build output ----
+    input_name = (mol_json.get("iupac_name")
+                  or mol_json.get("name")
+                  or _smiles_to_name_cs(input_smiles)
+                  or "")
+    output_name = _smiles_to_name_cs(output_smiles) or ""
+
+    aligned_names = _build_aligned_names(input_smiles, output_smiles)
+    diff = _build_mol_diff(input_smiles, output_smiles)
+
+    formula = _compute_formula(output_smiles)
+    mw_out = _compute_mw(output_smiles)
+
+    result = {
+        "ok": True,
+        "input_smiles": input_smiles,
+        "output_smiles": output_smiles,
+        "input_name": input_name,
+        "output_name": output_name,
+        "aligned_names": aligned_names,
+        "diff": diff,
+        "formula": formula,
+        "mw": mw_out,
+    }
+    if alternative_products:
+        result["alternative_products"] = alternative_products
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Tool definitions for LLM function calling
 # ---------------------------------------------------------------------------
 
@@ -1584,11 +2958,58 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
     """
     return [
         {
+            "name": "resolve_compound",
+            "description": (
+                "Resolve a chemical identifier to a rich molecule descriptor "
+                "with SMILES, molecular formula, MW, exact mass, IUPAC name, "
+                "reagent role, display text, and IUPAC substituent prefix form.  "
+                "This is the preferred resolver — use it whenever you need more "
+                "than just SMILES.\n\n"
+                "Accepts common names, IUPAC names, abbreviations, condensed "
+                "formulae, and CAS numbers.  Resolution order:\n"
+                "  1. Curated reagent DB (~186 entries with roles)\n"
+                "  2. Generative condensed formula parser (offline)\n"
+                "  3. ChemScript IUPAC name engine (offline)\n"
+                "  4. PubChem API (online, if use_network=True)\n\n"
+                "Output fields include:\n"
+                "  - smiles, formula, mw, exact_mass, iupac_name, source\n"
+                "  - role, display_text (from curated reagent DB if known)\n"
+                "  - prefix_form: IUPAC substituent prefix for use in "
+                "assemble_name (e.g. 'trifluoromethyl' for CF3, 'morpholino' "
+                "for morpholine); null if not a substituent group.\n\n"
+                "Examples of valid queries:\n"
+                '  - Common names: "aspirin", "morpholine", "HATU"\n'
+                '  - Abbreviations: "Cs2CO3", "DIPEA", "Et3N"\n'
+                '  - IUPAC names: "2-chloropyridine"\n'
+                '  - Formulae: "PhB(OH)2", "CF3COOH"\n'
+                '  - CAS numbers: "534-17-8"\n'
+                '  - Drug names: "deucravacitinib"\n'
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Chemical identifier to resolve.",
+                    },
+                    "use_network": {
+                        "type": "boolean",
+                        "description": (
+                            "Allow PubChem lookup (default: true). "
+                            "Set false for offline-only resolution."
+                        ),
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+        {
             "name": "resolve_to_smiles",
             "description": (
                 "Resolve a chemical identifier (name, abbreviation, formula, "
-                "or CAS number) to a canonical SMILES string.  Use this to "
-                "look up any chemical you need to work with.\n\n"
+                "or CAS number) to a canonical SMILES string.  Use this when "
+                "you need only the SMILES; for richer output (formula, MW, "
+                "exact mass, role) use resolve_compound instead.\n\n"
                 "Examples of valid queries:\n"
                 '  - Common names: "aspirin", "morpholine", "HATU"\n'
                 '  - IUPAC names: "2-chloropyridine", "4-methylbenzoic acid"\n'
@@ -2000,6 +3421,251 @@ def get_tool_definitions() -> List[Dict[str, Any]]:
                     },
                 },
                 "required": ["json_path"],
+            },
+        },
+        # --- Single-molecule rendering ---
+        {
+            "name": "draw_molecule",
+            "description": (
+                "Render a single molecule structure to a standalone CDXML "
+                "document (no arrow, no reaction scheme).  The output opens "
+                "directly in ChemDraw and uses ACS Document 1996 style.\n\n"
+                "Input is a dict with at minimum a 'smiles' field.  "
+                "An optional label (compound name or custom text) is placed "
+                "below the structure.  Use the 'output_path' argument to "
+                "write the CDXML to a file as well.\n\n"
+                "Label priority: 'label' > 'name' > 'iupac_name'.\n\n"
+                "Examples:\n"
+                "  draw_molecule({'smiles': 'CC(=O)Oc1ccccc1C(=O)O', "
+                "'name': 'aspirin'})\n"
+                "  draw_molecule({'smiles': 'c1ccccc1'}, "
+                "output_path='benzene.cdxml')\n"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "mol_json": {
+                        "type": "object",
+                        "description": (
+                            "Molecule dict.  Required key: 'smiles'. "
+                            "Optional display keys: 'label', 'name', "
+                            "'iupac_name'."
+                        ),
+                        "properties": {
+                            "smiles": {
+                                "type": "string",
+                                "description": "SMILES string of the molecule.",
+                            },
+                            "label": {
+                                "type": "string",
+                                "description": "Custom label shown below the structure.",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Compound name (used as label if 'label' not set).",
+                            },
+                            "iupac_name": {
+                                "type": "string",
+                                "description": "IUPAC name (used as label if 'name' not set).",
+                            },
+                        },
+                        "required": ["smiles"],
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": (
+                            "Optional file path to write the CDXML to "
+                            "(e.g. 'molecule.cdxml').  The CDXML string is "
+                            "always returned in the response regardless."
+                        ),
+                    },
+                },
+                "required": ["mol_json"],
+            },
+        },
+        # --- Molecular editor ---
+        {
+            "name": "modify_molecule",
+            "description": (
+                "Modify a molecule and verify the change with a structural "
+                "diff.  This is the premier tool for editing chemical "
+                "structures with verification — like drawing in ChemDraw "
+                "and visually checking the result.\n\n"
+                "Input is a mol_json dict (with at minimum a 'smiles' key, "
+                "e.g. from resolve_compound).  The tool applies the "
+                "requested operation, validates the result with RDKit, "
+                "and returns the output molecule with:\n\n"
+                "  - aligned_names: side-by-side IUPAC name comparison "
+                "(so you can see what changed in words)\n"
+                "  - diff.atoms_changed: MCS-based fragment diff "
+                "(so you can see what atoms were added/removed/replaced)\n"
+                "  - diff.delta_formula / diff.delta_mw: formula and MW "
+                "change numbers for sanity-checking\n\n"
+                "Six operation modes:\n\n"
+                "  'analyze' — DOES NOT modify the molecule.  Returns "
+                "a rich description: functional groups present, alternative "
+                "IUPAC names from different perspectives, canonical name, "
+                "bracket tree (hierarchical name decomposition), substituent "
+                "prefix form, formula, and MW.  Call this FIRST when you "
+                "need to understand a molecule before deciding what surgery "
+                "to do.\n\n"
+                "  'set_smiles' — LLM provides the new SMILES directly.  "
+                "Tool validates it and computes the diff.  Use when you "
+                "already know the exact SMILES.\n\n"
+                "  'set_name' — LLM provides an IUPAC or common name for "
+                "the desired product.  Tool resolves to SMILES and computes "
+                "the diff.  Use when you know the target molecule by name.\n\n"
+                "  'smarts' — apply a SMARTS reaction transform.  "
+                "Provide either a 'smarts' reaction SMARTS string "
+                "(e.g. '[c:1][F]>>[c:1][Cl]') or a 'reaction_name' from "
+                "list_reactions().  Good for specific bond transformations.\n\n"
+                "  'reaction' — apply a named reaction template via "
+                "apply_reaction().  Provide 'reaction_name' (required) and "
+                "optionally 'reagent' dict (with 'smiles' key) for binary "
+                "reactions.  Returns the primary product with the standard "
+                "diff fields; additional products go in 'alternative_products'."
+                "  Use list_reactions() to find available template names.\n\n"
+                "  'name_surgery' — modify via IUPAC name manipulation.  "
+                "Requires ChemScript.  Provide 'add' "
+                "(list of {locant, prefix} dicts) and/or 'remove' "
+                "(list of prefix strings).  Best for simple substituent "
+                "swaps on drug-like molecules.\n\n"
+                "Examples:\n"
+                "  # CD3 → benzyl swap\n"
+                "  modify_molecule({'smiles': '...'}, 'smarts',\n"
+                "    smarts='[C:1]([2H])([2H])[2H]>>[C:1]Cc1ccccc1')\n\n"
+                "  # Add fluoro at C3\n"
+                "  modify_molecule({'smiles': 'Clc1ccncc1'}, 'name_surgery',\n"
+                "    add=[{'locant': '3', 'prefix': 'fluoro'}])\n\n"
+                "  # Set explicit SMILES\n"
+                "  modify_molecule({'smiles': 'Clc1ccncc1'}, 'set_smiles',\n"
+                "    new_smiles='Clc1cc(F)ncc1', "
+                "description='fluoro at C3')\n"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "mol_json": {
+                        "type": "object",
+                        "description": (
+                            "Source molecule dict.  Required key: 'smiles'. "
+                            "Optional: 'name', 'iupac_name' (used as "
+                            "starting point for name_surgery)."
+                        ),
+                        "properties": {
+                            "smiles": {
+                                "type": "string",
+                                "description": "SMILES of the molecule to modify.",
+                            },
+                            "name": {
+                                "type": "string",
+                                "description": "Common name (optional).",
+                            },
+                            "iupac_name": {
+                                "type": "string",
+                                "description": (
+                                    "IUPAC name (used as starting point for "
+                                    "name_surgery if provided)."
+                                ),
+                            },
+                        },
+                        "required": ["smiles"],
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["analyze", "name_surgery", "smarts", "set_smiles", "set_name", "reaction"],
+                        "description": (
+                            "Operation to apply.  Use 'analyze' to inspect a "
+                            "molecule without modifying it; use 'name_surgery', "
+                            "'smarts', 'set_smiles', 'set_name', or 'reaction' to edit it."
+                        ),
+                    },
+                    "new_smiles": {
+                        "type": "string",
+                        "description": (
+                            "[set_smiles only] The new SMILES string. "
+                            "Will be validated with RDKit."
+                        ),
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": (
+                            "[set_name only] An IUPAC or common name for "
+                            "the desired product. Will be resolved to "
+                            "SMILES and validated."
+                        ),
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": (
+                            "[set_smiles/set_name] Optional description of "
+                            "the change (for logging/context)."
+                        ),
+                    },
+                    "smarts": {
+                        "type": "string",
+                        "description": (
+                            "[smarts only] Reaction SMARTS string. "
+                            "Use atom-map numbers for bond-order-preserving "
+                            "transforms, e.g. '[c:1][F]>>[c:1][Cl]'."
+                        ),
+                    },
+                    "reaction_name": {
+                        "type": "string",
+                        "description": (
+                            "[smarts, reaction] Named reaction from list_reactions(). "
+                            "For 'smarts': used as the SMARTS transform (alternative to "
+                            "providing 'smarts' directly). "
+                            "For 'reaction': required — selects the reaction template "
+                            "to apply via apply_reaction()."
+                        ),
+                    },
+                    "reagent": {
+                        "type": "object",
+                        "description": (
+                            "[reaction only] The coupling partner for binary reactions "
+                            "(e.g. amide_coupling, suzuki_coupling). "
+                            "Must contain at minimum a 'smiles' key."
+                        ),
+                        "properties": {
+                            "smiles": {
+                                "type": "string",
+                                "description": "SMILES of the reagent/coupling partner.",
+                            },
+                        },
+                        "required": ["smiles"],
+                    },
+                    "add": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "locant": {
+                                    "type": "string",
+                                    "description": "Position number (e.g. '3').",
+                                },
+                                "prefix": {
+                                    "type": "string",
+                                    "description": "IUPAC prefix (e.g. 'fluoro', 'methyl').",
+                                },
+                            },
+                            "required": ["locant", "prefix"],
+                        },
+                        "description": (
+                            "[name_surgery only] Substituents to add. "
+                            "Each entry needs 'locant' and 'prefix'."
+                        ),
+                    },
+                    "remove": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "[name_surgery only] List of IUPAC prefix "
+                            "strings to remove (e.g. ['chloro', 'methyl'])."
+                        ),
+                    },
+                },
+                "required": ["mol_json", "operation"],
             },
         },
     ]

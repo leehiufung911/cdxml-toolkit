@@ -118,7 +118,7 @@ def extract_run_datetime(pdf_path: str) -> Optional[str]:
     Looks for 'Date:DD-Mon-YYYY' and 'Time:HH:MM:SS' in the header.
     Returns ISO-format string 'YYYY-MM-DD HH:MM:SS' or None.
     """
-    from lcms_analyzer import extract_all_text
+    from ..lcms_analyzer import extract_all_text
 
     try:
         text = extract_all_text(pdf_path)

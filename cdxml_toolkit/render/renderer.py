@@ -362,6 +362,7 @@ def _build_fragment(
         elem_num = ELEMENT_NUMBERS.get(sym, 6)
         nh = a.get("num_hydrogens")
         charge = a.get("charge", 0)
+        isotope = a.get("isotope")
 
         attrs = [
             f'id="{atom_xml_id}"',
@@ -369,11 +370,13 @@ def _build_fragment(
             f'Z="{z}"',
         ]
 
-        is_carbon = (sym == "C" and not charge)
+        is_carbon = (sym == "C" and not charge and not isotope)
         if not is_carbon:
             attrs.append(f'Element="{elem_num}"')
             if nh is not None:
                 attrs.append(f'NumHydrogens="{nh}"')
+            if isotope:
+                attrs.append(f'Isotope="{isotope}"')
             attrs.append('NeedsClean="yes"')
             if charge:
                 attrs.append(f'Charge="{charge}"')
@@ -396,9 +399,15 @@ def _build_fragment(
                 f'BoundingBox="{lbx1:.2f} {lby1:.2f} {lbx2:.2f} {lby2:.2f}" '
                 f'LabelJustification="Left">'
             )
-            display_text = sym
-            if nh is not None and nh > 0:
-                display_text += "H" if nh == 1 else f"H{nh}"
+            # Use isotope-specific symbol for display (e.g. D for deuterium)
+            if sym == "H" and isotope == 2:
+                display_text = "D"
+            elif sym == "H" and isotope == 3:
+                display_text = "T"
+            else:
+                display_text = sym
+                if nh is not None and nh > 0:
+                    display_text += "H" if nh == 1 else f"H{nh}"
             lines.append(
                 f'<s font="{ACS_LABEL_FONT}" size="{ACS_LABEL_SIZE}" '
                 f'color="0" face="{ACS_LABEL_FACE}">{xml_escape(display_text)}</s>'

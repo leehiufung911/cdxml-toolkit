@@ -427,6 +427,9 @@ def _rdkit_mol_to_atom_bond_dicts(
         nh = atom.GetTotalNumHs(includeNeighbors=False)
         if atom.GetSymbol() != "C":
             a["num_hydrogens"] = nh
+        isotope = atom.GetIsotope()
+        if isotope:
+            a["isotope"] = isotope
         atoms.append(a)
 
     bonds = []
@@ -631,7 +634,7 @@ def enrich_with_mass_data(results: List[Dict]) -> None:
 # Main extraction pipeline
 # ---------------------------------------------------------------------------
 
-def extract_structures_from_image(
+def _extract_structures_raw(
     image_path: str,
     page: int = 0,
     segment: bool = True,
@@ -641,6 +644,9 @@ def extract_structures_from_image(
 ) -> List[Dict]:
     """
     Full pipeline: image → segmented crops → SMILES → 2D coords.
+
+    This is the internal low-level function.  Call extract_structures_from_image()
+    for the public API that returns structured JSON.
 
     Parameters
     ----------
@@ -658,6 +664,7 @@ def extract_structures_from_image(
         {
           "index": int,
           "smiles": str,
+          "confidence": float or None,   # mean per-token DECIMER confidence, 0-1
           "bbox": [x0, y0, x1, y1],
           "atoms": [...],
           "bonds": [...]
@@ -693,17 +700,29 @@ def extract_structures_from_image(
     for i, (crop, bbox) in enumerate(regions):
         log(f"Processing region {i+1}/{len(regions)} — bbox {bbox}")
 
-        # Save crop to temp file; DECIMER accepts a file path or numpy array.
-        # Passing numpy array directly is faster (no disk I/O).
+        # Try to call DECIMER with confidence=True to get per-token scores.
+        # Falls back to confidence=False if the version doesn't support it.
+        raw_confidence = None
         try:
-            smiles = predict_fn(crop, hand_drawn=hand_drawn)
+            result = predict_fn(crop, confidence=True, hand_drawn=hand_drawn)
+            if isinstance(result, tuple):
+                smiles, raw_confidence = result[0], result[1]
+            else:
+                smiles = result
         except TypeError:
             # Older DECIMER versions don't accept numpy; fall back to temp file
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tf:
                 tmp_path = tf.name
             try:
                 cv2.imwrite(tmp_path, crop)
-                smiles = predict_fn(tmp_path)
+                try:
+                    result = predict_fn(tmp_path, confidence=True)
+                    if isinstance(result, tuple):
+                        smiles, raw_confidence = result[0], result[1]
+                    else:
+                        smiles = result
+                except TypeError:
+                    smiles = predict_fn(tmp_path)
             finally:
                 os.unlink(tmp_path)
         except Exception as exc:
@@ -717,8 +736,13 @@ def extract_structures_from_image(
         if len(smiles) > _MAX_SMILES_LEN:
             log(f"  SMILES too long ({len(smiles)} chars) — discarding as noise")
             smiles = ""
+            raw_confidence = None
 
-        log(f"  SMILES: {smiles or '(none)'}")
+        # Compute a single confidence scalar from per-token scores
+        confidence = _compute_confidence_score(raw_confidence)
+
+        log(f"  SMILES: {smiles or '(none)'}"
+            + (f"  confidence: {confidence:.3f}" if confidence is not None else ""))
 
         # 5. SMILES → 2D coordinates
         mol_data = None
@@ -743,6 +767,7 @@ def extract_structures_from_image(
         entry: Dict = {
             "index": i,
             "smiles": smiles,
+            "confidence": confidence,
             "bbox": list(bbox),
         }
         if mol_data:
@@ -759,6 +784,369 @@ def extract_structures_from_image(
 
     log(f"Done. {len(results)} structure(s) extracted.")
     return results
+
+
+# ---------------------------------------------------------------------------
+# Confidence scoring
+# ---------------------------------------------------------------------------
+
+def _compute_confidence_score(
+    raw_confidence: Optional[list],
+) -> Optional[float]:
+    """
+    Reduce DECIMER's per-token confidence list to a single scalar in [0, 1].
+
+    DECIMER returns a list of (token, score) tuples when called with
+    confidence=True.  This function computes the geometric mean of the
+    scores, which is more sensitive to low-confidence tokens than the
+    arithmetic mean and better reflects overall prediction reliability.
+
+    Returns None if no confidence data is available.
+    """
+    if not raw_confidence:
+        return None
+
+    scores = []
+    for item in raw_confidence:
+        if isinstance(item, (tuple, list)) and len(item) >= 2:
+            try:
+                scores.append(float(item[1]))
+            except (TypeError, ValueError):
+                pass
+        else:
+            try:
+                scores.append(float(item))
+            except (TypeError, ValueError):
+                pass
+
+    if not scores:
+        return None
+
+    # Geometric mean (log-space to avoid underflow)
+    import math as _math
+    log_sum = sum(_math.log(max(s, 1e-9)) for s in scores)
+    return round(_math.exp(log_sum / len(scores)), 4)
+
+
+# ---------------------------------------------------------------------------
+# Nearby text label detection
+# ---------------------------------------------------------------------------
+
+def _detect_nearby_labels(
+    bgr: "np.ndarray",
+    structure_bboxes: List[Tuple[int, int, int, int]],
+    search_margin: int = 80,
+) -> List[Optional[str]]:
+    """
+    Detect text labels near each structure bounding box in the image.
+
+    Uses a two-phase strategy:
+    1. Find candidate text regions via OpenCV contours (small, elongated blobs
+       that look like text lines rather than structure fragments).
+    2. If pytesseract or easyocr is available, OCR those regions and associate
+       the nearest text label to each structure.  If neither is installed,
+       returns None for every structure.
+
+    Parameters
+    ----------
+    bgr              : BGR image array
+    structure_bboxes : list of (x0, y0, x1, y1) for each detected structure
+    search_margin    : how many pixels outside the structure bbox to search
+                       for associated text labels
+
+    Returns
+    -------
+    List of str|None, one per structure.  Each entry is the detected label
+    text (stripped) or None if no label was found or OCR is unavailable.
+    """
+    if not HAS_CV2 or not structure_bboxes:
+        return [None] * len(structure_bboxes)
+
+    import numpy as np
+
+    h, w = bgr.shape[:2]
+
+    # --- Phase 1: Find candidate text regions ---
+    # Text regions tend to be: small area, high aspect ratio (wide and short),
+    # located outside the structure bounding boxes.
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Use a smaller morphological kernel to preserve text character separations
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=1)
+    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Build a mask of structure regions (to exclude them from label search)
+    structure_set = set()
+    for (sx0, sy0, sx1, sy1) in structure_bboxes:
+        for px in range(max(0, sx0), min(w, sx1)):
+            for py in range(max(0, sy0), min(h, sy1)):
+                structure_set.add((px, py))
+
+    text_blobs: List[Tuple[int, int, int, int]] = []
+    for cnt in contours:
+        cx, cy, cw, ch = cv2.boundingRect(cnt)
+        area = cw * ch
+
+        # Skip tiny noise and huge blobs
+        if area < 50 or area > 0.05 * h * w:
+            continue
+
+        # Text lines are wider than they are tall (aspect > 1.5), or are
+        # narrow vertical labels.  Very square blobs are likely structure parts.
+        aspect = max(cw, ch) / max(min(cw, ch), 1)
+        if aspect < 1.5:
+            continue
+
+        # Skip blobs that overlap significantly with any structure bbox
+        blob_cx = cx + cw // 2
+        blob_cy = cy + ch // 2
+        in_structure = False
+        for (sx0, sy0, sx1, sy1) in structure_bboxes:
+            if sx0 <= blob_cx <= sx1 and sy0 <= blob_cy <= sy1:
+                in_structure = True
+                break
+        if in_structure:
+            continue
+
+        text_blobs.append((cx, cy, cx + cw, cy + ch))
+
+    if not text_blobs:
+        return [None] * len(structure_bboxes)
+
+    # --- Phase 2: Try OCR on the candidates ---
+    # Check for OCR availability (pytesseract preferred, easyocr fallback)
+    ocr_fn = _get_ocr_fn()
+    if ocr_fn is None:
+        # No OCR available; return None for all structures but record that
+        # text blobs were detected (useful for debugging).
+        return [None] * len(structure_bboxes)
+
+    # Associate each text blob with the nearest structure (by edge distance)
+    labels = [None] * len(structure_bboxes)
+
+    for (bx0, by0, bx1, by1) in text_blobs:
+        # Check if this blob falls within the search_margin of any structure
+        best_dist = float("inf")
+        best_idx = -1
+
+        for si, (sx0, sy0, sx1, sy1) in enumerate(structure_bboxes):
+            # Expand structure bbox by search_margin
+            ex0, ey0 = sx0 - search_margin, sy0 - search_margin
+            ex1, ey1 = sx1 + search_margin, sy1 + search_margin
+
+            # Check if blob centre is within expanded bbox
+            bcx, bcy = (bx0 + bx1) // 2, (by0 + by1) // 2
+            if ex0 <= bcx <= ex1 and ey0 <= bcy <= ey1:
+                # Compute edge-to-edge distance
+                dx = max(0, max(sx0 - bx1, bx0 - sx1))
+                dy = max(0, max(sy0 - by1, by0 - sy1))
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = si
+
+        if best_idx < 0:
+            continue
+
+        # OCR the blob
+        try:
+            crop = bgr[by0:by1, bx0:bx1]
+            text = ocr_fn(crop).strip()
+        except Exception:
+            text = None
+
+        if text:
+            # Append to existing label (a structure can have multiple labels)
+            existing = labels[best_idx]
+            labels[best_idx] = f"{existing} {text}".strip() if existing else text
+
+    return labels
+
+
+def _get_ocr_fn():
+    """
+    Return a callable f(bgr_crop) -> str that performs OCR on a BGR image crop.
+
+    Tries pytesseract first, then easyocr.  Returns None if neither is available.
+    """
+    # Try pytesseract (fastest, most common)
+    try:
+        import pytesseract
+        from PIL import Image as _PILImage
+
+        def _tesseract_ocr(bgr_crop: "np.ndarray") -> str:
+            rgb = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2RGB)
+            pil_img = _PILImage.fromarray(rgb)
+            return pytesseract.image_to_string(pil_img, config="--psm 7").strip()
+
+        return _tesseract_ocr
+    except ImportError:
+        pass
+
+    # Try easyocr (slower startup, but no external binary required)
+    try:
+        import easyocr
+
+        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+
+        def _easyocr_ocr(bgr_crop: "np.ndarray") -> str:
+            results = _reader.readtext(bgr_crop, detail=0)
+            return " ".join(results).strip()
+
+        return _easyocr_ocr
+    except ImportError:
+        pass
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Public API: extract_structures_from_image
+# ---------------------------------------------------------------------------
+
+def extract_structures_from_image(
+    image_path: str,
+    page: int = 0,
+    segment: bool = True,
+    hand_drawn: bool = False,
+    verbose: bool = False,
+    merge_gap: Optional[int] = None,
+    detect_labels: bool = True,
+) -> Dict:
+    """
+    Extract all chemical structures from an image using DECIMER.
+
+    Takes a PNG, JPG, or PDF path and returns a structured JSON dict with every
+    detected molecule, its SMILES, DECIMER confidence score, bounding box in
+    image pixel coordinates, and (when OCR is available) any nearby text label.
+
+    Parameters
+    ----------
+    image_path    : path to PNG/JPG/PDF image file
+    page          : PDF page index (0-based); ignored for raster images
+    segment       : if True (default), segment the image into individual
+                    structure regions before passing each to DECIMER.
+                    Set False when the whole image is a single structure.
+    hand_drawn    : use the DECIMER hand-drawn model instead of the default
+                    printed-structure model
+    verbose       : print progress messages to stderr
+    merge_gap     : pixel gap for merging nearby segmentation boxes.
+                    None = adaptive (median-based).  0 = no merging.
+    detect_labels : if True (default), attempt to detect text labels near
+                    each structure.  Requires pytesseract or easyocr to
+                    return non-None label values; without an OCR library the
+                    label field is always null.
+
+    Returns
+    -------
+    dict with the following keys:
+
+        ok           (bool)  True on success, False on error
+        image_path   (str)   Absolute path of the input image
+        structures   (list)  One entry per detected structure:
+            smiles       (str)        DECIMER-predicted SMILES (may be "")
+            confidence   (float|null) Geometric-mean per-token DECIMER score
+                                      in [0, 1], or null if unavailable
+            bbox         (list)       [x0, y0, x1, y1] pixel coords (top-left,
+                                      bottom-right) in the input image
+            label        (str|null)   Nearby text label detected by OCR, or null
+        error        (str)   Only present on failure (ok=False)
+
+    Examples
+    --------
+    >>> from cdxml_toolkit.image.structure_from_image import extract_structures_from_image
+    >>> result = extract_structures_from_image("scheme.png")
+    >>> if result["ok"]:
+    ...     for s in result["structures"]:
+    ...         print(s["smiles"], s["confidence"])
+
+    Notes
+    -----
+    - DECIMER models are downloaded to ~/.data/DECIMER-V2/ on first run (~570 MB).
+    - Confidence uses geometric mean of per-character DECIMER scores, making it
+      sensitive to low-confidence characters.  Scores above ~0.85 are reliable;
+      below ~0.70 the SMILES should be verified manually.
+    - Labels are detected only when pytesseract or easyocr is installed.
+      Install either with: pip install pytesseract  or  pip install easyocr
+    - For backward-compatible low-level access (returns List[Dict] with atoms/bonds),
+      use _extract_structures_raw() directly.
+    """
+    abs_path = os.path.abspath(image_path)
+
+    # Guard: DECIMER is required
+    try:
+        _load_decimer(hand_drawn=hand_drawn)
+    except ImportError as exc:
+        return {
+            "ok": False,
+            "image_path": abs_path,
+            "structures": [],
+            "error": str(exc),
+        }
+
+    # Guard: OpenCV is required for segmentation and label detection
+    if not HAS_CV2:
+        return {
+            "ok": False,
+            "image_path": abs_path,
+            "structures": [],
+            "error": (
+                "opencv-python is required. "
+                "Install with: pip install opencv-python"
+            ),
+        }
+
+    try:
+        raw = _extract_structures_raw(
+            image_path=image_path,
+            page=page,
+            segment=segment,
+            hand_drawn=hand_drawn,
+            verbose=verbose,
+            merge_gap=merge_gap,
+        )
+    except FileNotFoundError as exc:
+        return {
+            "ok": False,
+            "image_path": abs_path,
+            "structures": [],
+            "error": str(exc),
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "image_path": abs_path,
+            "structures": [],
+            "error": f"Extraction failed: {exc}",
+        }
+
+    # Detect nearby text labels (spatial proximity + optional OCR)
+    labels: List[Optional[str]] = [None] * len(raw)
+    if detect_labels and HAS_CV2 and raw:
+        try:
+            bgr = load_image(image_path, page=page)
+            bboxes = [tuple(entry["bbox"]) for entry in raw]
+            labels = _detect_nearby_labels(bgr, bboxes)  # type: ignore[arg-type]
+        except Exception:
+            # Label detection is best-effort; never fail the whole extraction
+            labels = [None] * len(raw)
+
+    structures = []
+    for entry, label in zip(raw, labels):
+        structures.append({
+            "smiles": entry.get("smiles", ""),
+            "confidence": entry.get("confidence"),
+            "bbox": entry.get("bbox", []),
+            "label": label,
+        })
+
+    return {
+        "ok": True,
+        "image_path": abs_path,
+        "structures": structures,
+    }
 
 
 # ---------------------------------------------------------------------------
