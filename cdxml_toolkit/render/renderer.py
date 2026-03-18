@@ -205,11 +205,11 @@ def _smiles_to_fragment_data(
         pass
 
     # Extract atom/bond dicts
-    from ..structure_from_image import _rdkit_mol_to_atom_bond_dicts
+    from ..image.structure_from_image import _rdkit_mol_to_atom_bond_dicts
     atoms, bonds = _rdkit_mol_to_atom_bond_dicts(mol)
 
     # Normalize to CDXML coordinate space (scale + flip y + center)
-    from ..structure_from_image import normalize_for_cdxml
+    from ..image.structure_from_image import normalize_for_cdxml
     atoms, bonds = normalize_for_cdxml(atoms, bonds, center_x, center_y)
 
     return atoms, bonds
@@ -291,11 +291,11 @@ def _align_mol_to_reference(
         pass
 
     # Extract atom/bond dicts
-    from ..structure_from_image import _rdkit_mol_to_atom_bond_dicts
+    from ..image.structure_from_image import _rdkit_mol_to_atom_bond_dicts
     atoms, bonds = _rdkit_mol_to_atom_bond_dicts(target_mol)
 
     # Normalize to CDXML coordinate space
-    from ..structure_from_image import normalize_for_cdxml
+    from ..image.structure_from_image import normalize_for_cdxml
     atoms, bonds = normalize_for_cdxml(atoms, bonds, center_x, center_y)
 
     return atoms, bonds
