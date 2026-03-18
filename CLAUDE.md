@@ -35,6 +35,13 @@ pip install -e ".[all]"             # Everything
 | `cdxml-image` | `chemdraw.cdxml_to_image` | Render CDXML to PNG/SVG (ChemDraw COM) |
 | `cdxml-build` | `cdxml_builder` | Build CDXML from atom/bond data |
 | `cdxml-ole` | `office.ole_embedder` | Embed CDXML as editable OLE objects in PPTX/DOCX |
+| `cdxml-mcp` | `mcp_server.server` | Model Context Protocol server |
+| `cdxml-lcms` | `analysis.lcms_analyzer` | Parse single LCMS PDF report (Waters + manual) |
+| `cdxml-multi-lcms` | `analysis.deterministic.multi_lcms_analyzer` | Cross-file LCMS collation and analysis |
+| `cdxml-procedure` | `analysis.deterministic.procedure_writer` | Assemble lab book entries |
+| `cdxml-discover` | `analysis.deterministic.discover_experiment_files` | Discover experiment files in a directory |
+| `cdxml-format-entry` | `analysis.format_procedure_entry` | Agent-driven lab book entry formatting |
+| `cdxml-nmr` | `analysis.extract_nmr` | Extract NMR data from MestReNova PDFs |
 
 All CLIs use `python -m cdxml_toolkit.<module>` or the installed console script name.
 
@@ -65,6 +72,36 @@ cdxml-image scheme.cdxml
 3. **CDXML rendering** (`renderer`) — generates 2D coordinates from SMILES via RDKit, computes bounding boxes, sizes the arrow to fit content, formats chemical text (subscripts, italics), and outputs ACS-styled CDXML.
 
 Steps 2-3 require only RDKit. No ChemDraw COM needed for rendering.
+
+### Reaction summary for LLM context
+
+The full reaction JSON can be large (~3,000+ tokens with geometry data). Use `reaction_summary()` for a context-efficient view:
+
+```python
+from cdxml_toolkit.perception import reaction_summary
+
+# Default: ~8 fields per species, compact
+summary = reaction_summary("reaction.json")
+
+# Request specific fields for a task
+summary = reaction_summary("reaction.json",
+    species_fields=["id", "name", "smiles", "exact_mass", "adducts"],  # LCMS task
+    eln_fields=["product_yield", "procedure_plain"],                    # procedure task
+)
+
+# All fields (equivalent to loading the full JSON)
+summary = reaction_summary("reaction.json", species_fields=["*"], top_fields=["*"], eln_fields=["*"])
+```
+
+**Defaults** (if no arguments given):
+- **species**: `id`, `name`, `role`, `role_detail`, `smiles`, `display_text`, `formula`, `mw`
+- **top-level**: `experiment`, `conditions`
+- **eln_data**: `product_yield`, `reaction_type`
+
+**All available fields** — request by name or pass `["*"]`:
+- **species**: id, name, role, role_detail, smiles, smiles_neutral, classification_method, is_sm, is_dp, is_substrate, is_solvent, exact_mass, exact_mass_full, mw, formula, adducts, source, source_id, csv_equiv, csv_mass, csv_name, csv_volume, csv_supplier, display_text, original_geometry
+- **top-level**: version, experiment, input_files, reaction_smiles, reaction_class, reaction_name, classification_confidence, warnings, metadata, conditions
+- **eln_data**: sm_mass, product_obtained, product_yield, procedure_text, procedure_plain, reaction_type, start_date, labbook_name, solvents, solvent_details
 
 ## Scheme DSL: three input modes
 
@@ -208,6 +245,15 @@ scheme = SchemeDescriptor(
 render_to_file(scheme, "scheme.cdxml")
 ```
 
+**Reaction summary** (context-efficient JSON for LLM reasoning):
+```python
+from cdxml_toolkit.perception import reaction_summary
+summary = reaction_summary("reaction.json")
+# Returns only default fields; specify extras per task:
+summary = reaction_summary("reaction.json",
+    species_fields=["id", "name", "smiles", "exact_mass", "adducts"])
+```
+
 ### Workflow recipes
 
 **"Draw a scheme from an image"**
@@ -295,6 +341,7 @@ cdxml_toolkit/
 │
 ├── naming/                     # Agent chemistry reasoning tools
 │   ├── mol_builder.py          # Agent API: resolve names, apply reactions, deprotect, name surgery
+│   ├── reactions_datamol.json  # Reaction template database (datamol format)
 │   ├── name_decomposer.py      # Structural decomposition: see a molecule's functional groups
 │   └── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
 │
@@ -452,7 +499,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-646 tests (+ 1 pre-existing failure). All pure Python — no ChemDraw COM required for the test suite.
+All pure Python — no ChemDraw COM required for the test suite.
 
 ## Bundled samples
 
