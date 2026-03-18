@@ -200,6 +200,123 @@ class ReactionDescriptor:
                 })
         return result
 
+    # -- Default field sets for summary() ------------------------------------
+    DEFAULT_SPECIES_FIELDS = [
+        "id", "name", "role", "role_detail", "smiles",
+        "display_text", "formula", "mw",
+    ]
+    DEFAULT_TOP_FIELDS = [
+        "experiment", "conditions",
+    ]
+    DEFAULT_ELN_FIELDS = [
+        "product_yield", "reaction_type",
+    ]
+    ALL_SPECIES_FIELDS = [
+        f.name for f in SpeciesDescriptor.__dataclass_fields__.values()
+    ]
+    ALL_TOP_FIELDS = [
+        "version", "experiment", "input_files", "reaction_smiles",
+        "reaction_class", "reaction_name", "classification_confidence",
+        "warnings", "metadata", "conditions",
+    ]
+    ALL_ELN_FIELDS = [
+        "sm_mass", "product_obtained", "product_yield", "procedure_text",
+        "procedure_plain", "reaction_type", "start_date", "labbook_name",
+        "solvents", "solvent_details",
+    ]
+
+    def summary(
+        self,
+        species_fields: Optional[List[str]] = None,
+        top_fields: Optional[List[str]] = None,
+        eln_fields: Optional[List[str]] = None,
+    ) -> dict:
+        """Return a slim summary dict for LLM context.
+
+        Parameters
+        ----------
+        species_fields : list of str, optional
+            Per-species fields to include.  ``None`` → DEFAULT_SPECIES_FIELDS.
+            Pass ``["*"]`` for all fields.
+        top_fields : list of str, optional
+            Top-level reaction fields to include.  ``None`` → DEFAULT_TOP_FIELDS.
+            Pass ``["*"]`` for all fields.
+        eln_fields : list of str, optional
+            ``eln_data`` sub-fields to include.  ``None`` → DEFAULT_ELN_FIELDS.
+            Pass ``["*"]`` for all eln_data fields.  Pass ``[]`` to omit eln_data.
+
+        Returns
+        -------
+        dict
+            A filtered copy of the reaction descriptor.
+        """
+        sp_keys = (self.ALL_SPECIES_FIELDS if species_fields == ["*"]
+                   else (species_fields or self.DEFAULT_SPECIES_FIELDS))
+        t_keys = (self.ALL_TOP_FIELDS if top_fields == ["*"]
+                  else (top_fields or self.DEFAULT_TOP_FIELDS))
+        e_keys = (self.ALL_ELN_FIELDS if eln_fields == ["*"]
+                  else (eln_fields if eln_fields is not None
+                        else self.DEFAULT_ELN_FIELDS))
+
+        # Top-level fields
+        full = self.to_dict()
+        out: Dict[str, Any] = {}
+        for k in t_keys:
+            if k in full:
+                out[k] = full[k]
+
+        # Species
+        species_out = []
+        for sp in self.species:
+            sp_d = sp.to_dict()
+            species_out.append({k: sp_d[k] for k in sp_keys if k in sp_d})
+        out["species"] = species_out
+
+        # ELN data
+        if e_keys and self.eln_data:
+            eln_out = {k: self.eln_data[k] for k in e_keys
+                       if k in self.eln_data}
+            if eln_out:
+                out["eln_data"] = eln_out
+
+        return out
+
+
+def reaction_summary(
+    json_path: str,
+    species_fields: Optional[List[str]] = None,
+    top_fields: Optional[List[str]] = None,
+    eln_fields: Optional[List[str]] = None,
+) -> dict:
+    """Load a reaction JSON and return a slim summary for LLM context.
+
+    Convenience wrapper around ``ReactionDescriptor.from_json().summary()``.
+    See :meth:`ReactionDescriptor.summary` for parameter docs.
+
+    Available species fields
+    ------------------------
+    id, name, role, role_detail, smiles, smiles_neutral, classification_method,
+    is_sm, is_dp, is_substrate, is_solvent, exact_mass, exact_mass_full, mw,
+    formula, adducts, source, source_id, csv_equiv, csv_mass, csv_name,
+    csv_volume, csv_supplier, display_text, original_geometry
+
+    Available top-level fields
+    --------------------------
+    version, experiment, input_files, reaction_smiles, reaction_class,
+    reaction_name, classification_confidence, warnings, metadata, conditions
+
+    Available eln_data fields
+    -------------------------
+    sm_mass, product_obtained, product_yield, procedure_text, procedure_plain,
+    reaction_type, start_date, labbook_name, solvents, solvent_details
+    """
+    desc = ReactionDescriptor.from_json(json_path)
+    return desc.summary(
+        species_fields=species_fields,
+        top_fields=top_fields,
+        eln_fields=eln_fields,
+    )
+
 
 def _lcms_role(sp: SpeciesDescriptor) -> str:
     """Map SpeciesDescriptor role to ExpectedSpecies role string."""

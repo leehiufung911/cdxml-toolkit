@@ -12,6 +12,7 @@ import pytest
 from cdxml_toolkit.perception.reaction_parser import (
     SpeciesDescriptor,
     ReactionDescriptor,
+    reaction_summary,
     split_condition_text,
     _is_condition_token,
     _resolve_text_label,
@@ -753,3 +754,205 @@ class TestBackwardCompatV10:
         assert rd.species[0].is_substrate is False
         assert rd.species[0].is_solvent is False
         assert rd.species[0].display_text is None
+
+
+# ===================================================================
+# ReactionDescriptor.summary() and reaction_summary() tests
+# ===================================================================
+
+def _make_test_descriptor():
+    """Build a ReactionDescriptor with enough fields to exercise summary()."""
+    sp0 = SpeciesDescriptor(
+        id="sp_0", smiles="Brc1ncnc2sccc12", name="ArBr",
+        role="atom_contributing", role_detail=None,
+        classification_method="schneider_fp",
+        is_sm=True, is_dp=False, is_substrate=True, is_solvent=False,
+        exact_mass=213.92, exact_mass_full=213.92, mw=215.07,
+        formula="C6H3BrN2S",
+        adducts={"[M+H]+": 214.93, "[M-H]-": 212.91},
+        source="fragment", source_id="23",
+        csv_equiv="1.0", csv_mass="2.15 g", csv_name="ArBr",
+        display_text="ArBr",
+        original_geometry={"atoms": [{"id": 2, "x": 0, "y": 0, "symbol": "C"}],
+                           "bonds": [], "bond_length": 14.4},
+    )
+    sp1 = SpeciesDescriptor(
+        id="sp_1", smiles="C1COCCN1", name="morpholine",
+        role="atom_contributing",
+        is_sm=False, is_dp=False, is_substrate=False, is_solvent=False,
+        exact_mass=87.07, exact_mass_full=87.07, mw=87.12,
+        formula="C4H9NO",
+        adducts={"[M+H]+": 88.08},
+        source="fragment", source_id="62",
+        csv_equiv="1.2", csv_mass="1.06 g",
+        display_text="morpholine (1.2 eq.)",
+    )
+    sp2 = SpeciesDescriptor(
+        id="sp_2", smiles="c1nc(N2CCOCC2)c2ccsc2n1", name="product",
+        role="product",
+        is_sm=False, is_dp=True, is_substrate=False, is_solvent=False,
+        exact_mass=221.06, exact_mass_full=221.06, mw=221.28,
+        formula="C10H11N3OS",
+        adducts={"[M+H]+": 222.07},
+        source="fragment", source_id="97",
+        display_text="product",
+    )
+    return ReactionDescriptor(
+        experiment="TEST-001",
+        species=[sp0, sp1, sp2],
+        conditions=["105 °C", "24 h"],
+        eln_data={
+            "sm_mass": "2.15 g",
+            "product_obtained": "1.60 g",
+            "product_yield": "72 %",
+            "reaction_type": "Buchwald coupling",
+            "procedure_plain": "SM was dissolved in dioxane...",
+            "labbook_name": "Draft",
+            "solvents": ["Dioxane"],
+        },
+    )
+
+
+class TestReactionSummary:
+    """Tests for ReactionDescriptor.summary() and reaction_summary()."""
+
+    def test_default_summary_species_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary()
+        sp = s["species"][0]
+        # Default fields present
+        for key in ["id", "name", "role", "smiles", "display_text",
+                     "formula", "mw"]:
+            assert key in sp, f"missing default field: {key}"
+        # Heavy fields absent
+        for key in ["original_geometry", "adducts", "exact_mass",
+                     "source_id", "csv_mass", "classification_method"]:
+            assert key not in sp, f"should not be in default: {key}"
+
+    def test_default_summary_top_level(self):
+        desc = _make_test_descriptor()
+        s = desc.summary()
+        assert s["experiment"] == "TEST-001"
+        assert s["conditions"] == ["105 °C", "24 h"]
+        # Non-default top-level fields absent
+        assert "version" not in s
+        assert "reaction_smiles" not in s
+        assert "warnings" not in s
+        assert "metadata" not in s
+
+    def test_default_summary_eln(self):
+        desc = _make_test_descriptor()
+        s = desc.summary()
+        assert s["eln_data"]["product_yield"] == "72 %"
+        assert s["eln_data"]["reaction_type"] == "Buchwald coupling"
+        # Non-default eln fields absent
+        assert "procedure_plain" not in s["eln_data"]
+        assert "sm_mass" not in s["eln_data"]
+
+    def test_custom_species_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(species_fields=["id", "smiles", "exact_mass", "adducts"])
+        sp = s["species"][0]
+        assert sp["exact_mass"] == 213.92
+        assert "[M+H]+" in sp["adducts"]
+        assert "name" not in sp
+
+    def test_custom_top_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(top_fields=["experiment", "version"])
+        assert s["experiment"] == "TEST-001"
+        assert s["version"] == "1.3"
+        assert "conditions" not in s
+
+    def test_custom_eln_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(eln_fields=["procedure_plain", "sm_mass"])
+        assert s["eln_data"]["procedure_plain"].startswith("SM was")
+        assert s["eln_data"]["sm_mass"] == "2.15 g"
+        assert "product_yield" not in s["eln_data"]
+
+    def test_empty_eln_fields_omits_eln_data(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(eln_fields=[])
+        assert "eln_data" not in s
+
+    def test_star_species_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(species_fields=["*"])
+        sp = s["species"][0]
+        assert "original_geometry" in sp
+        assert "adducts" in sp
+        assert "csv_mass" in sp
+
+    def test_star_top_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(top_fields=["*"])
+        assert "version" in s
+        assert "experiment" in s
+        assert "conditions" in s
+
+    def test_star_eln_fields(self):
+        desc = _make_test_descriptor()
+        s = desc.summary(eln_fields=["*"])
+        assert "procedure_plain" in s["eln_data"]
+        assert "product_yield" in s["eln_data"]
+        assert "sm_mass" in s["eln_data"]
+
+    def test_no_eln_data(self):
+        desc = _make_test_descriptor()
+        desc.eln_data = None
+        s = desc.summary()
+        assert "eln_data" not in s
+
+    def test_role_detail_included_when_present(self):
+        desc = _make_test_descriptor()
+        desc.species[0].role_detail = "ligand"
+        s = desc.summary()
+        assert s["species"][0]["role_detail"] == "ligand"
+
+    def test_role_detail_absent_when_none(self):
+        desc = _make_test_descriptor()
+        s = desc.summary()
+        # sp_0 has role_detail=None → to_dict() strips it → not in summary
+        assert "role_detail" not in s["species"][0]
+
+    def test_species_count_preserved(self):
+        desc = _make_test_descriptor()
+        s = desc.summary()
+        assert len(s["species"]) == 3
+
+    def test_reaction_summary_from_file(self):
+        """Test the standalone reaction_summary() convenience function."""
+        desc = _make_test_descriptor()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
+            json.dump(desc.to_dict(), f, indent=2)
+            path = f.name
+        try:
+            s = reaction_summary(path)
+            assert s["experiment"] == "TEST-001"
+            assert len(s["species"]) == 3
+            assert "original_geometry" not in s["species"][0]
+        finally:
+            os.unlink(path)
+
+    def test_reaction_summary_custom_fields_from_file(self):
+        """Test custom field selection via the file-based function."""
+        desc = _make_test_descriptor()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
+            json.dump(desc.to_dict(), f, indent=2)
+            path = f.name
+        try:
+            s = reaction_summary(
+                path,
+                species_fields=["id", "exact_mass", "adducts"],
+                eln_fields=["procedure_plain"],
+            )
+            assert s["species"][0]["exact_mass"] == 213.92
+            assert "name" not in s["species"][0]
+            assert "procedure_plain" in s["eln_data"]
+        finally:
+            os.unlink(path)

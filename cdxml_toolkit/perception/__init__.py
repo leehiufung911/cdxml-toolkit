@@ -6,5 +6,5 @@ labels mean.
 """
 
 from .scheme_reader import read_scheme, SchemeDescription
-from .reaction_parser import parse_reaction, ReactionDescriptor
+from .reaction_parser import parse_reaction, ReactionDescriptor, reaction_summary
 from .scheme_segmenter import segment_scheme, classify_scheme_complexity
