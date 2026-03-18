@@ -582,6 +582,52 @@ def normalize_for_cdxml(
 
 
 # ---------------------------------------------------------------------------
+# Mass data enrichment
+# ---------------------------------------------------------------------------
+
+def enrich_with_mass_data(results: List[Dict]) -> None:
+    """Add formula, mw, exact_mass, and adducts to each extracted structure.
+
+    Mutates *results* in place.  Requires RDKit; silently skips if unavailable.
+    """
+    if not HAS_RDKIT:
+        return
+
+    from rdkit.Chem import Descriptors, rdMolDescriptors
+
+    for entry in results:
+        smiles = entry.get("smiles", "").strip()
+        if not smiles:
+            continue
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            continue
+
+        exact_mass_full = Descriptors.ExactMolWt(mol)
+        mw = Descriptors.MolWt(mol)
+        formula = rdMolDescriptors.CalcMolFormula(mol)
+
+        # Salt splitting: neutral = largest fragment
+        frags = Chem.GetMolFrags(mol, asMols=True)
+        if len(frags) > 1:
+            neutral_mol = max(frags, key=lambda m: m.GetNumHeavyAtoms())
+            exact_mass = Descriptors.ExactMolWt(neutral_mol)
+        else:
+            exact_mass = exact_mass_full
+
+        entry["formula"] = formula
+        entry["mw"] = round(mw, 4)
+        entry["exact_mass"] = round(exact_mass, 5)
+        entry["exact_mass_full"] = round(exact_mass_full, 5)
+        entry["adducts"] = {
+            "[M+H]+": round(exact_mass + 1.00728, 5),
+            "[M-H]-": round(exact_mass - 1.00728, 5),
+            "[M+Na]+": round(exact_mass + 22.98922, 5),
+            "[M+formate]-": round(exact_mass + 44.99820, 5),
+        }
+
+
+# ---------------------------------------------------------------------------
 # Main extraction pipeline
 # ---------------------------------------------------------------------------
 
@@ -707,6 +753,9 @@ def extract_structures_from_image(
             entry["bonds"] = []
 
         results.append(entry)
+
+    # Enrich with mass data (formula, MW, exact_mass, adducts)
+    enrich_with_mass_data(results)
 
     log(f"Done. {len(results)} structure(s) extracted.")
     return results

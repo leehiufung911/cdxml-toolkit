@@ -1505,8 +1505,378 @@ def reaction_from_image(
 
 
 # ---------------------------------------------------------------------------
+# High-level pipeline: image + descriptor → JSON (ReactionDescriptor)
+# ---------------------------------------------------------------------------
+
+def reaction_from_image_to_json(
+    image_path: str,
+    descriptor: Dict,
+    output_path: Optional[str] = None,
+    page: int = 0,
+    segment: bool = True,
+    hand_drawn: bool = False,
+    verbose: bool = False,
+    merge_gap: Optional[int] = None,
+    use_network: bool = True,
+) -> "ReactionDescriptor":
+    """
+    Full pipeline: image + reaction descriptor → ReactionDescriptor JSON.
+
+    Same extraction as :func:`reaction_from_image`, but returns a
+    :class:`ReactionDescriptor` (the standard JSON source of truth) instead
+    of a CDXML string.  The agent can then render a scheme downstream via
+    the scheme DSL if needed.
+
+    Parameters
+    ----------
+    image_path   : path to screenshot PNG/JPG/PDF
+    descriptor   : dict with reactant_indices, product_indices, conditions_above/below
+    output_path  : if given, write JSON to this path
+    page         : PDF page number
+    segment      : whether to segment the image
+    hand_drawn   : use hand-drawn DECIMER model
+    verbose      : print progress
+    merge_gap    : pixel gap for merging nearby boxes (None = adaptive)
+    use_network  : allow PubChem lookups for condition name resolution
+
+    Returns
+    -------
+    ReactionDescriptor
+    """
+    from ..perception.reaction_parser import (
+        ReactionDescriptor, SpeciesDescriptor,
+        _resolve_text_label, _compute_all_masses,
+    )
+    from . import structure_from_image as sfi
+    import datetime
+
+    def _log(msg: str):
+        if verbose:
+            print(f"[reaction_from_image_to_json] {msg}", file=sys.stderr)
+
+    # Step 1: Extract structures (DECIMER)
+    _log(f"Extracting structures from {image_path}...")
+    structures = sfi.extract_structures_from_image(
+        image_path,
+        page=page,
+        segment=segment,
+        hand_drawn=hand_drawn,
+        verbose=verbose,
+        merge_gap=merge_gap,
+    )
+    _log(f"Extracted {len(structures)} structure(s)")
+
+    reactant_indices = set(descriptor.get("reactant_indices", []))
+    product_indices = set(descriptor.get("product_indices", []))
+    conditions_above = descriptor.get("conditions_above", [])
+    conditions_below = descriptor.get("conditions_below", [])
+
+    db = get_reagent_db()
+    species_list: List[SpeciesDescriptor] = []
+    warnings: List[str] = []
+    sp_idx = 0
+
+    # Step 2: Build SpeciesDescriptor for each extracted structure
+    for entry in structures:
+        smiles = entry.get("smiles", "").strip()
+        idx = entry.get("index", 0)
+
+        if not smiles:
+            warnings.append(f"Structure at index {idx}: DECIMER returned no SMILES")
+            continue
+
+        # Canonicalize SMILES
+        canon_smiles = smiles
+        try:
+            from rdkit import Chem
+            mol = Chem.MolFromSmiles(smiles)
+            if mol:
+                canon_smiles = Chem.MolToSmiles(mol)
+        except ImportError:
+            pass
+
+        # Determine role from descriptor indices
+        if idx in reactant_indices:
+            role = "atom_contributing"
+            is_sm = (idx == min(reactant_indices))  # first reactant = SM
+        elif idx in product_indices:
+            role = "product"
+            is_sm = False
+        else:
+            role = "non_contributing"
+            is_sm = False
+
+        is_dp = (role == "product" and
+                 (len(product_indices) == 1 or idx == min(product_indices)))
+
+        # Try to get a display name from reagent DB (by SMILES)
+        display = db.display_for_smiles(canon_smiles) if canon_smiles else None
+        name = display or canon_smiles
+
+        # Role detail from reagent DB (by SMILES)
+        role_detail = db.role_for_smiles(canon_smiles) if canon_smiles else None
+
+        # Build original_geometry from extracted atoms/bonds
+        atoms = entry.get("atoms", [])
+        bonds = entry.get("bonds", [])
+        original_geometry = None
+        if atoms:
+            original_geometry = {
+                "atoms": [
+                    {k: v for k, v in a.items()
+                     if k in ("index", "x", "y", "symbol", "num_hydrogens", "charge")}
+                    for a in atoms
+                ],
+                "bonds": [
+                    {k: v for k, v in b.items()
+                     if k in ("index", "atom1", "atom2", "order", "cfg", "double_pos")}
+                    for b in bonds
+                ],
+            }
+
+        sp = SpeciesDescriptor(
+            id=f"sp_{sp_idx}",
+            smiles=canon_smiles,
+            name=name,
+            role=role,
+            role_detail=role_detail,
+            classification_method="image_descriptor",
+            is_sm=is_sm,
+            is_dp=is_dp,
+            source="image",
+            display_text=name,
+            original_geometry=original_geometry,
+        )
+        species_list.append(sp)
+        sp_idx += 1
+
+    # Step 3: Resolve conditions text to species or condition strings
+    condition_strings: List[str] = []
+    all_conditions = conditions_above + conditions_below
+
+    for cond_text in all_conditions:
+        cond_text = cond_text.strip()
+        if not cond_text:
+            continue
+
+        # Non-chemistry text goes straight to conditions
+        if _is_non_chemistry_text(cond_text):
+            condition_strings.append(cond_text)
+            continue
+
+        # Try to resolve to SMILES
+        smi = _resolve_text_label(cond_text, use_network=use_network)
+        if smi:
+            # Get display name and role from reagent DB
+            display = db.display_for_name(cond_text) or cond_text
+            role_detail = db.role_for_name(cond_text)
+
+            sp = SpeciesDescriptor(
+                id=f"sp_{sp_idx}",
+                smiles=smi,
+                name=display,
+                role="non_contributing",
+                role_detail=role_detail,
+                classification_method="name_resolution",
+                source="text_label",
+                display_text=display,
+            )
+            species_list.append(sp)
+            sp_idx += 1
+        else:
+            # Could not resolve — store as condition text
+            condition_strings.append(cond_text)
+
+    # Step 4: Compute masses, formulas, adducts for all species
+    _compute_all_masses(species_list)
+
+    # Step 5: Build the reaction SMILES
+    reaction_smiles = None
+    try:
+        reactant_smis = [sp.smiles for sp in species_list
+                         if sp.role == "atom_contributing" and sp.smiles]
+        product_smis = [sp.smiles for sp in species_list
+                        if sp.role == "product" and sp.smiles]
+        if reactant_smis and product_smis:
+            reaction_smiles = (
+                ".".join(reactant_smis) + ">>" + ".".join(product_smis)
+            )
+    except Exception:
+        pass
+
+    desc = ReactionDescriptor(
+        version="1.3",
+        experiment="",
+        input_files={"image": os.path.abspath(image_path)},
+        reaction_smiles=reaction_smiles,
+        species=species_list,
+        warnings=warnings,
+        metadata={
+            "parser_version": "reaction_from_image 1.0",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "source": "image",
+        },
+        conditions=condition_strings,
+    )
+
+    if output_path:
+        desc.to_json(output_path)
+        _log(f"Wrote {output_path}")
+
+    return desc
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
+def _structures_json_to_descriptor(
+    structures: List[Dict],
+    descriptor: Dict,
+    source_path: str,
+    verbose: bool = False,
+) -> "ReactionDescriptor":
+    """Build a ReactionDescriptor from pre-extracted structures + descriptor.
+
+    Used when --structures-json is combined with --format json in the CLI.
+    """
+    from ..perception.reaction_parser import (
+        ReactionDescriptor, SpeciesDescriptor,
+        _resolve_text_label, _compute_all_masses,
+    )
+    import datetime
+
+    db = get_reagent_db()
+    reactant_indices = set(descriptor.get("reactant_indices", []))
+    product_indices = set(descriptor.get("product_indices", []))
+    conditions_above = descriptor.get("conditions_above", [])
+    conditions_below = descriptor.get("conditions_below", [])
+
+    species_list: List[SpeciesDescriptor] = []
+    warnings: List[str] = []
+    sp_idx = 0
+
+    for entry in structures:
+        smiles = entry.get("smiles", "").strip()
+        idx = entry.get("index", 0)
+        if not smiles:
+            warnings.append(f"Structure at index {idx}: no SMILES")
+            continue
+
+        canon_smiles = smiles
+        try:
+            from rdkit import Chem
+            mol = Chem.MolFromSmiles(smiles)
+            if mol:
+                canon_smiles = Chem.MolToSmiles(mol)
+        except ImportError:
+            pass
+
+        if idx in reactant_indices:
+            role = "atom_contributing"
+            is_sm = (idx == min(reactant_indices))
+        elif idx in product_indices:
+            role = "product"
+            is_sm = False
+        else:
+            role = "non_contributing"
+            is_sm = False
+
+        is_dp = (role == "product" and
+                 (len(product_indices) == 1 or idx == min(product_indices)))
+
+        display = db.display_for_smiles(canon_smiles) if canon_smiles else None
+        name = display or canon_smiles
+        role_detail = db.role_for_smiles(canon_smiles) if canon_smiles else None
+
+        atoms = entry.get("atoms", [])
+        bonds = entry.get("bonds", [])
+        original_geometry = None
+        if atoms:
+            original_geometry = {
+                "atoms": [
+                    {k: v for k, v in a.items()
+                     if k in ("index", "x", "y", "symbol", "num_hydrogens", "charge")}
+                    for a in atoms
+                ],
+                "bonds": [
+                    {k: v for k, v in b.items()
+                     if k in ("index", "atom1", "atom2", "order", "cfg", "double_pos")}
+                    for b in bonds
+                ],
+            }
+
+        sp = SpeciesDescriptor(
+            id=f"sp_{sp_idx}",
+            smiles=canon_smiles,
+            name=name,
+            role=role,
+            role_detail=role_detail,
+            classification_method="image_descriptor",
+            is_sm=is_sm,
+            is_dp=is_dp,
+            source="image",
+            display_text=name,
+            original_geometry=original_geometry,
+        )
+        species_list.append(sp)
+        sp_idx += 1
+
+    condition_strings: List[str] = []
+    for cond_text in conditions_above + conditions_below:
+        cond_text = cond_text.strip()
+        if not cond_text:
+            continue
+        if _is_non_chemistry_text(cond_text):
+            condition_strings.append(cond_text)
+            continue
+        smi = _resolve_text_label(cond_text, use_network=True)
+        if smi:
+            display = db.display_for_name(cond_text) or cond_text
+            role_detail_cond = db.role_for_name(cond_text)
+            sp = SpeciesDescriptor(
+                id=f"sp_{sp_idx}",
+                smiles=smi,
+                name=display,
+                role="non_contributing",
+                role_detail=role_detail_cond,
+                classification_method="name_resolution",
+                source="text_label",
+                display_text=display,
+            )
+            species_list.append(sp)
+            sp_idx += 1
+        else:
+            condition_strings.append(cond_text)
+
+    _compute_all_masses(species_list)
+
+    reaction_smiles = None
+    try:
+        r_smis = [sp.smiles for sp in species_list
+                  if sp.role == "atom_contributing" and sp.smiles]
+        p_smis = [sp.smiles for sp in species_list
+                  if sp.role == "product" and sp.smiles]
+        if r_smis and p_smis:
+            reaction_smiles = ".".join(r_smis) + ">>" + ".".join(p_smis)
+    except Exception:
+        pass
+
+    return ReactionDescriptor(
+        version="1.3",
+        experiment="",
+        input_files={"structures_json": os.path.abspath(source_path)},
+        reaction_smiles=reaction_smiles,
+        species=species_list,
+        warnings=warnings,
+        metadata={
+            "parser_version": "reaction_from_image 1.0",
+            "timestamp": datetime.datetime.now().isoformat(),
+            "source": "image",
+        },
+        conditions=condition_strings,
+    )
+
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -1582,6 +1952,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "(from structure_from_image.py). Skips DECIMER extraction."
         ),
     )
+    p.add_argument(
+        "--format",
+        choices=["cdxml", "json"],
+        default="cdxml",
+        help=(
+            "Output format (default: cdxml). 'json' produces a "
+            "ReactionDescriptor JSON file (same format as cdxml-parse)."
+        ),
+    )
     return p
 
 
@@ -1601,14 +1980,43 @@ def main(argv: Optional[List[str]] = None) -> int:
             descriptor = json.load(f)
 
     # Output path
+    ext = ".json" if args.format == "json" else ".cdxml"
     if args.output is None:
         if args.image:
             stem = os.path.splitext(os.path.basename(args.image))[0]
         else:
             stem = os.path.splitext(os.path.basename(args.structures_json))[0]
-        args.output = stem + "_scheme.cdxml"
+        args.output = stem + ("_reaction" + ext if args.format == "json"
+                              else "_scheme" + ext)
 
-    # If pre-extracted structures are provided, skip DECIMER
+    # --- JSON output path: use reaction_from_image_to_json() ---
+    if args.format == "json":
+        if args.image:
+            desc = reaction_from_image_to_json(
+                image_path=args.image,
+                descriptor=descriptor,
+                output_path=args.output,
+                page=args.page,
+                segment=not args.no_segment,
+                hand_drawn=args.hand_drawn,
+                verbose=args.verbose,
+                merge_gap=args.gap,
+            )
+        else:
+            # --structures-json provided: build descriptor from pre-extracted
+            from . import structure_from_image as sfi
+            with open(args.structures_json, encoding="utf-8") as f:
+                structures = json.load(f)
+            # Synthesize an image path for metadata
+            desc = _structures_json_to_descriptor(
+                structures, descriptor, args.structures_json, args.verbose,
+            )
+            desc.to_json(args.output)
+
+        print(f"Written reaction JSON to {args.output}", file=sys.stderr)
+        return 0
+
+    # --- CDXML output path (existing behaviour) ---
     if args.structures_json:
         with open(args.structures_json, encoding="utf-8") as f:
             structures = json.load(f)

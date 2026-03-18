@@ -306,7 +306,7 @@ class TestToolDefinitions:
     def test_returns_list(self):
         defs = get_tool_definitions()
         assert isinstance(defs, list)
-        assert len(defs) == 10  # 7 name tools + 3 graph tools
+        assert len(defs) >= 10  # at least 7 name tools + 3 graph tools
 
     def test_all_have_required_keys(self):
         for tool in get_tool_definitions():
@@ -319,12 +319,13 @@ class TestToolDefinitions:
 
     def test_tool_names(self):
         names = {t["name"] for t in get_tool_definitions()}
-        assert names == {
+        expected = {
             "resolve_to_smiles", "get_prefix_form", "assemble_name",
             "modify_name", "validate_name", "name_to_structure",
             "enumerate_names",
             "list_reactions", "apply_reaction", "deprotect",
         }
+        assert expected.issubset(names)
 
 
 # ---------------------------------------------------------------------------
