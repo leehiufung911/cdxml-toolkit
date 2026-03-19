@@ -598,21 +598,61 @@ def format_lab_entry(entries_json: Any) -> dict:
     """Format a list of entry dicts into a structured lab book text entry.
 
     Takes a list of typed entry dicts (or a JSON string) and produces a
-    formatted lab book entry. Each entry has a "type" field that controls
-    formatting: "text", "reaction", "lcms-species", "lcms-areas",
-    "lcms-manual", etc.
+    formatted lab book entry.  The tool re-parses LCMS PDFs to fill in
+    exact numbers — you only provide peak identifications (name, approximate
+    RT, ion) as search keys.
 
-    Designed for agent-driven lab book assembly after LCMS analysis and
-    yield calculation are complete.
+    IMPORTANT: Do NOT write free-form LCMS text.  Use the structured entry
+    types below.  The tool will look up the actual RT, area%, m/z, and UV
+    from the PDF.
+
+    Entry types and their required fields:
+
+      {"type": "text", "content": "Procedure paragraph or section header..."}
+
+      {"type": "lcms-species",
+       "file": "path/to/report.pdf",
+       "label": "t = 0 min",
+       "peaks": [
+         {"name": "Product",  "rt": 1.02, "ion": {"mode": "ES-", "mz": 444.1}},
+         {"name": "SM",       "rt": 0.65, "ion": {"mode": "ES+", "mz": 275.1}},
+         {"name": "TPPO",     "rt": 1.02, "ion": {"mode": "ES+", "mz": 279.1}}
+       ]}
+
+      {"type": "lcms-areas",
+       "file": "path/to/report.pdf",
+       "label": "t = 10 min",
+       "peaks": [
+         {"name": "Product",     "rt": 1.03, "compound_related": true},
+         {"name": "Byproduct",   "rt": 1.26, "compound_related": false}
+       ]}
+
+      {"type": "lcms-species",
+       "file": "path/to/report.pdf",
+       "label": "Purified product",
+       "peaks": [
+         {"name": "Product", "rt": 1.01, "ion": {"mode": "ES-", "mz": 444.2},
+          "purity": true, "detector": "220nm"}
+       ]}
+
+      {"type": "lcms-manual",
+       "file": "path/to/manual_integration.pdf",
+       "label": "Manual LC",
+       "peaks": [
+         {"name": "Product", "rt": 1.01, "compound_related": true}
+       ]}
+
+      {"type": "nmr", "content": "1H NMR (400 MHz, DMSO-d6): ..."}
+
+    Workflow: First call parse_analysis_file on each PDF to see peaks/masses.
+    Then build entries referencing those PDFs with approximate RT and ion as
+    search keys.  This tool re-reads the PDF and fills in exact numbers.
 
     Args:
-        entries_json: List of entry dicts, or a JSON string containing such a
-                      list (or {"entries": [...]}).  Each dict must have "type"
-                      and type-specific fields.
+        entries_json: List of entry dicts, or a JSON string, or {"entries": [...]}.
 
     Returns:
         Dict with keys: ok, text (formatted lab book entry string).
-        Returns {ok: False, error: "..."} on failure.
     """
     from cdxml_toolkit.analysis.format_procedure_entry import process_entries
 
