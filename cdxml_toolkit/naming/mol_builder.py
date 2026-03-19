@@ -1810,11 +1810,32 @@ def apply_reaction(reaction_name: str,
         if real_key:
             tmpl = templates[real_key]
     if tmpl is None:
-        available = ", ".join(sorted(templates.keys()))
+        # Fuzzy match: find closest reaction names
+        query_lower = reaction_name.lower().replace("-", "_").replace(" ", "_")
+        scored = []
+        for k in templates:
+            k_lower = k.lower()
+            # Substring match
+            if query_lower in k_lower or k_lower in query_lower:
+                scored.append((0, k))
+            else:
+                # Count shared words
+                q_parts = set(query_lower.split("_"))
+                k_parts = set(k_lower.split("_"))
+                overlap = len(q_parts & k_parts)
+                if overlap > 0:
+                    scored.append((1, k))
+        scored.sort()
+        suggestions = [s[1] for s in scored[:5]]
+        if suggestions:
+            hint = f"Did you mean: {', '.join(suggestions)}?"
+        else:
+            # Show a sample of available reactions
+            all_names = sorted(templates.keys())
+            hint = f"Some available reactions: {', '.join(all_names[:15])}... ({len(all_names)} total)"
         return {
             "ok": False,
-            "error": f"Unknown reaction '{reaction_name}'. "
-                     f"Available: {available}",
+            "error": f"Unknown reaction '{reaction_name}'. {hint}",
         }
 
     # Parse reaction SMARTS
@@ -2590,11 +2611,25 @@ def modify_molecule(mol_json: Dict[str, Any],
             return {"ok": False, "error": f"SMARTS reaction failed: {exc}"}
 
         if not product_sets:
+            # Detect common patterns and suggest named reactions
+            hints = []
+            s = smarts_str
+            # Check most specific patterns first
+            if any(p in s for p in ["OC(C)(C)C", "Boc", "BOC", "boc", "tBu"]):
+                hints.append("For Boc deprotection, try: operation='reaction', reaction_name='BOC_deprotection'")
+            elif any(p in s for p in ["Fmoc", "fmoc", "fluorenyl"]):
+                hints.append("For Fmoc deprotection, try: operation='reaction', reaction_name='fmoc_deprotection'")
+            elif "C(=O)N" in s and "OC(=O)N" not in s:
+                hints.append("For amide hydrolysis, try: operation='reaction', reaction_name='amide_hydrolysis'")
+            elif "C(=O)O" in s:
+                hints.append("For ester hydrolysis, try: operation='reaction', reaction_name='ester_hydrolysis'")
+            if not hints:
+                hints.append("Hint: use operation='reaction' with a reaction_name for common transformations. Call modify_molecule with operation='reaction' and no reaction_name to see all available reactions.")
             return {
                 "ok": False,
                 "error": (
                     "SMARTS pattern did not match the input molecule. "
-                    "Check atom-map numbers and pattern."
+                    + " ".join(hints)
                 ),
                 "input_smiles": input_smiles,
             }

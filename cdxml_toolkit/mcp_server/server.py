@@ -87,6 +87,18 @@ def resolve_name(query: str, use_network: bool = True) -> dict:
         prefix_form (IUPAC substituent prefix, if applicable).
         Returns {ok: False, error: "..."} if unresolvable.
     """
+    if not query or not query.strip():
+        return (
+            "Usage: resolve_name(query='compound name or formula')\n"
+            "Examples:\n"
+            "  resolve_name(query='aspirin')\n"
+            "  resolve_name(query='CF3')\n"
+            "  resolve_name(query='Cs2CO3')\n"
+            "  resolve_name(query='deucravacitinib')\n"
+            "  resolve_name(query='534-17-8')  # CAS number\n"
+            "Returns: {ok, name, smiles, formula, mw, exact_mass, role, display_text, source}"
+        )
+
     from cdxml_toolkit.naming.mol_builder import resolve_compound
 
     return resolve_compound(query, use_network=use_network)
@@ -154,6 +166,18 @@ def modify_molecule(
         output_name, aligned_names, diff (atoms_added, atoms_removed,
         atoms_changed, mcs_smarts, delta_formula, delta_mw), formula, mw.
     """
+    if not mol_json or not mol_json.get("smiles"):
+        return (
+            "Usage: modify_molecule(mol_json={smiles: '...'}, operation='...')\n"
+            "Operations: analyze, name_surgery, smarts, set_smiles, set_name, reaction\n"
+            "Examples:\n"
+            "  analyze:      modify_molecule({smiles:'Clc1ccncc1'}, 'analyze')\n"
+            "  name_surgery: modify_molecule({smiles:'...'}, 'name_surgery', add=[{locant:'4', prefix:'fluoro'}])\n"
+            "  reaction:     modify_molecule({smiles:'...'}, 'reaction', reaction_name='amide_coupling', reagent={smiles:'...'})\n"
+            "  set_smiles:   modify_molecule({smiles:'...'}, 'set_smiles', new_smiles='validated_smiles')\n"
+            "Tip: get mol_json from resolve_name first, not hand-written SMILES."
+        )
+
     from cdxml_toolkit.naming.mol_builder import modify_molecule as _modify
 
     kwargs: Dict[str, Any] = {}
@@ -203,6 +227,16 @@ def draw_molecule(mol_json: dict, output_path: Optional[str] = None) -> dict:
         Dict with keys: ok, cdxml (CDXML document string), and output_path if
         a path was specified. Returns {ok: False, error: "..."} on failure.
     """
+    if not mol_json or not mol_json.get("smiles"):
+        return (
+            "Usage: draw_molecule(mol_json={smiles:'...'}, output_path='path.cdxml')\n"
+            "Examples:\n"
+            "  draw_molecule({smiles:'c1ccncc1'})  # pyridine, no file written\n"
+            "  draw_molecule({smiles:'c1ccncc1', label:'Pyridine'}, output_path='out.cdxml')\n"
+            "Returns: {ok, cdxml (CDXML string), output_path}\n"
+            "Tip: get mol_json from resolve_name — do not hand-write SMILES."
+        )
+
     from cdxml_toolkit.naming.mol_builder import draw_molecule as _draw
 
     return _draw(mol_json, output_path=output_path)
@@ -221,75 +255,57 @@ def render_scheme(
 ) -> str:
     """Render a chemical reaction scheme to publication-ready CDXML.
 
-    Accepts exactly ONE input mode:
-    1. yaml_text    — YAML scheme descriptor string.  Write the YAML yourself
-                      using the schema below.  This is the most flexible mode.
-    2. compact_text — Compact DSL string (Mermaid-like).
-    3. json_path    — Path to a reaction JSON file from parse_reaction.
-                      Auto-generates YAML layout internally.
+    Accepts exactly ONE of: yaml_text, compact_text, or json_path.
+    Call with NO arguments to see the full YAML schema reference.
 
-    Output is ACS Document 1996 style (BondLength=14.40, Arial 10pt).
+    - yaml_text:  Write YAML with structures (ID + SMILES) and steps
+                  (substrates, products, above/below arrow).
+    - json_path:  Path to reaction JSON from parse_reaction (auto-layout).
 
-    YAML SCHEMA (for yaml_text mode):
-
-        layout: sequential       # linear | sequential | stacked-rows
-        source: reaction.json    # optional — resolve SMILES by species ID from this JSON
-        structures:
-          SM:
-            smiles: "CCO"        # required unless source JSON provides it
-            label: "Ethanol"     # optional label below structure
-          Reagent:
-            smiles: "O=C(O)c1cccnc1F"
-          Product:
-            smiles: "CC=O"
-        steps:
-          - substrates: [SM]           # list of structure IDs on center line
-            products: [Product]        # list of structure IDs on center line
-            above_arrow:
-              structures: [Reagent]    # drawn structures above arrow
-              text:
-                - "HATU (1.5 eq)"      # text labels above arrow
-            below_arrow:
-              text:
-                - "DMF, rt, 2 h"       # text labels below arrow
-
-        # For stacked-rows (multiple independent reactions):
-        sections:
-          - label: "(i)"
-            steps:
-              - substrates: [A]
-                products: [B]
-                below_arrow:
-                  text: ["HCl (10 eq)", "Dioxane"]
-          - label: "(ii)"
-            steps:
-              - substrates: [C]
-                products: [D]
-                below_arrow:
-                  text: ["HCl (10 eq)", "Dioxane"]
-
-    Layout conventions:
-    - ONE main substrate on center line per step.  Additional reagents go
-      ABOVE the arrow (in above_arrow.structures or above_arrow.text).
-      This lets the renderer share intermediates between sequential steps.
-    - Atom-contributing species → drawn structures (center line).
-    - Catalysts, bases, solvents → text labels (above/below arrow).
+    Convention: ONE substrate on center line per step.  Additional reagents
+    go in above_arrow (structures or text).  This shares intermediates
+    between sequential steps.
 
     Args:
-        yaml_text:    YAML scheme descriptor string (see schema above).
+        yaml_text:    YAML scheme descriptor string.
         compact_text: Compact DSL syntax string.
         json_path:    Path to a reaction JSON file.
-        layout:       Layout mode for json_path auto-generation:
-                      "auto", "landscape", or "portrait".
+        layout:       Layout for json_path: "auto", "landscape", "portrait".
 
     Returns:
-        Complete CDXML document string (opens in ChemDraw).
+        CDXML string, or YAML schema reference if called with no arguments.
     """
     from cdxml_toolkit.render.renderer import render
 
     modes = sum(x is not None for x in [yaml_text, compact_text, json_path])
     if modes == 0:
-        raise ValueError("Provide exactly one of: yaml_text, compact_text, or json_path.")
+        return (
+            "No input provided. Call with exactly one of: yaml_text, compact_text, or json_path.\n\n"
+            "YAML SCHEMA REFERENCE:\n"
+            "  layout: sequential       # linear | sequential | stacked-rows\n"
+            "  source: reaction.json    # optional — resolve SMILES by ID from this JSON\n"
+            "  structures:\n"
+            "    SM:\n"
+            "      smiles: \"CCO\"        # required unless source JSON provides it\n"
+            "      label: \"Ethanol\"     # optional label below structure\n"
+            "    Product:\n"
+            "      smiles: \"CC=O\"\n"
+            "  steps:\n"
+            "    - substrates: [SM]\n"
+            "      products: [Product]\n"
+            "      above_arrow:\n"
+            "        structures: [Reagent]    # drawn structures above arrow\n"
+            "        text: [\"PCC (1.5 eq)\"]   # text labels above arrow\n"
+            "      below_arrow:\n"
+            "        text: [\"DCM, rt, 2 h\"]\n\n"
+            "For stacked-rows (independent reactions), use sections:\n"
+            "  sections:\n"
+            "    - label: \"(i)\"\n"
+            "      steps: [{substrates: [A], products: [B], ...}]\n"
+            "    - label: \"(ii)\"\n"
+            "      steps: [{substrates: [C], products: [D], ...}]\n\n"
+            "Convention: ONE substrate on center line per step. Reagents go in above_arrow."
+        )
     if modes > 1:
         raise ValueError("Provide only ONE of: yaml_text, compact_text, or json_path.")
 
@@ -354,12 +370,18 @@ def parse_reaction(
         reaction_smiles, reaction_class, species (list with role, smiles,
         formula, mw, etc.), conditions, and eln_data.
     """
-    from cdxml_toolkit.perception.reaction_parser import parse_reaction as _parse
-
     if not any([cdxml, cdx, csv, rxn, input_dir]):
-        raise ValueError(
-            "Provide at least one input: cdxml, cdx, csv, rxn, or input_dir."
+        return (
+            "Usage: parse_reaction(cdxml='path.cdxml', csv='path.csv')\n"
+            "Provide at least one input file; cdxml+csv is the most common combination.\n"
+            "Examples:\n"
+            "  parse_reaction(cdxml='experiment.cdxml')\n"
+            "  parse_reaction(cdxml='experiment.cdxml', csv='experiment.csv')\n"
+            "  parse_reaction(input_dir='experiments/KL-CC-001/')  # auto-discovers files\n"
+            "Returns: reaction descriptor JSON with species, roles, SMILES, conditions."
         )
+
+    from cdxml_toolkit.perception.reaction_parser import parse_reaction as _parse
 
     kwargs: Dict[str, Any] = {}
     if cdxml:
@@ -425,6 +447,16 @@ def summarize_reaction(
     Returns:
         Compact dict with requested fields for each species and top-level keys.
     """
+    if not json_path or not json_path.strip():
+        return (
+            "Usage: summarize_reaction(json_path='reaction.json')\n"
+            "Examples:\n"
+            "  summarize_reaction(json_path='reaction.json')  # default fields\n"
+            "  summarize_reaction(json_path='reaction.json', species_fields=['id','name','smiles','adducts'])  # LCMS task\n"
+            "  summarize_reaction(json_path='reaction.json', species_fields=['*'])  # all fields\n"
+            "Default species fields: id, name, role, smiles, display_text, formula, mw"
+        )
+
     from cdxml_toolkit.perception.reaction_parser import reaction_summary
 
     p = _validate_file(json_path, "JSON file")
@@ -470,6 +502,15 @@ def extract_structures_from_image(
         in [0,1], bbox [x0,y0,x1,y1], label or null). Returns {ok: False,
         error: "..."} if DECIMER is not installed or extraction fails.
     """
+    if not image_path or not image_path.strip():
+        return (
+            "Usage: extract_structures_from_image(image_path='image.png')\n"
+            "Supported formats: PNG, JPG, PDF\n"
+            "Returns SMILES + confidence score + bounding box for each structure found.\n"
+            "Note: DECIMER models download ~570 MB on first run.\n"
+            "Tip: pass returned SMILES through resolve_name to validate and enrich."
+        )
+
     try:
         from cdxml_toolkit.image.structure_from_image import (
             extract_structures_from_image as _extract,
@@ -515,6 +556,14 @@ def parse_scheme(cdxml_path: str) -> dict:
         (human-readable summary), and optionally sub_schemes for multi-panel
         files.
     """
+    if not cdxml_path or not cdxml_path.strip():
+        return (
+            "Usage: parse_scheme(cdxml_path='scheme.cdxml')\n"
+            "Reads a CDXML scheme and returns species, steps, topology, and narrative.\n"
+            "Example: parse_scheme(cdxml_path='experiments/KL-CC-001/scheme.cdxml')\n"
+            "Returns: {species, steps, topology, content_type, narrative}"
+        )
+
     from cdxml_toolkit.perception.scheme_reader import read_scheme
 
     p = _validate_file(cdxml_path, "CDXML file")
@@ -571,6 +620,16 @@ def convert_cdx_cdxml(
         Dict with keys: ok, input, output (absolute path to written file).
         Returns {ok: False, error: "..."} if conversion fails.
     """
+    if not input_path or not input_path.strip():
+        return (
+            "Usage: convert_cdx_cdxml(input_path='file.cdx', output_path='file.cdxml')\n"
+            "Direction is auto-detected from extension: .cdx → .cdxml or .cdxml → .cdx\n"
+            "Examples:\n"
+            "  convert_cdx_cdxml(input_path='experiment.cdx')\n"
+            "  convert_cdx_cdxml(input_path='scheme.cdxml', output_path='scheme.cdx')\n"
+            "Requires ChemDraw COM (Windows, ChemDraw must be closed)."
+        )
+
     from cdxml_toolkit.chemdraw.cdx_converter import convert_file
 
     p = _validate_file(input_path, "Input file")
@@ -610,6 +669,16 @@ def parse_analysis_file(pdf_path: str) -> dict:
         For NMR: dict with chemical_shifts, multiplicities, integrations.
         Returns {ok: False, error: "..."} if module unavailable or parse fails.
     """
+    if not pdf_path or not pdf_path.strip():
+        return (
+            "Usage: parse_analysis_file(pdf_path='report.pdf')\n"
+            "Supports: Waters LCMS reports, MestReNova NMR PDFs.\n"
+            "Examples:\n"
+            "  parse_analysis_file(pdf_path='lcms/t0.pdf')\n"
+            "  parse_analysis_file(pdf_path='nmr/product_1H.pdf')\n"
+            "Returns: retention times, peak areas, masses (LCMS) or shifts/multiplicities (NMR)."
+        )
+
     try:
         from cdxml_toolkit.analysis.parse_analysis_file import parse_analysis_file as _parse
     except ImportError as e:
@@ -693,6 +762,18 @@ def format_lab_entry(entries_json: Any) -> dict:
     Returns:
         Dict with keys: ok, text (formatted lab book entry string).
     """
+    # Return usage if called with empty/null-ish input
+    if entries_json is None or entries_json == [] or entries_json == {} or entries_json == "":
+        return (
+            "Usage: format_lab_entry(entries_json=[...entry dicts...])\n"
+            "Entry types:\n"
+            "  {type:'text', content:'Procedure paragraph...'}\n"
+            "  {type:'lcms-species', file:'report.pdf', label:'t=0', peaks:[{name:'Product', rt:1.02, ion:{mode:'ES+', mz:445.1}}]}\n"
+            "  {type:'lcms-areas', file:'report.pdf', label:'t=10 min', peaks:[{name:'Product', rt:1.03, compound_related:true}]}\n"
+            "  {type:'nmr', content:'1H NMR (400 MHz, DMSO-d6): ...'}\n"
+            "Workflow: call parse_analysis_file on each PDF first to identify peaks/RTs."
+        )
+
     from cdxml_toolkit.analysis.format_procedure_entry import process_entries
 
     # Accept a JSON string, a list, or a dict with "entries" key
@@ -746,6 +827,16 @@ def extract_cdxml_from_office(
         cdxml_output, cdx_output, error for each extracted object).
         Returns {ok: False, error: "..."} if extraction fails entirely.
     """
+    if not file_path or not file_path.strip():
+        return (
+            "Usage: extract_cdxml_from_office(file_path='document.pptx', output_dir='out/')\n"
+            "Extracts embedded ChemDraw objects from PPTX or DOCX files.\n"
+            "Examples:\n"
+            "  extract_cdxml_from_office(file_path='presentation.pptx')\n"
+            "  extract_cdxml_from_office(file_path='report.docx', output_dir='extracted/')\n"
+            "Returns: {ok, count, objects:[{cdxml_output, source_path}]}"
+        )
+
     from cdxml_toolkit.office.ole_extractor import extract_from_office, ExtractedObject
 
     p = _validate_file(file_path, "Office file")
@@ -820,6 +911,16 @@ def embed_cdxml_in_office(
         Office file), format ("pptx" or "docx"), num_objects_embedded.
         Returns {ok: False, error: "..."} if embedding fails.
     """
+    if not cdxml_path or not cdxml_path.strip():
+        return (
+            "Usage: embed_cdxml_in_office(cdxml_path='scheme.cdxml', office_path='output.pptx')\n"
+            "Embeds a CDXML file as a double-clickable ChemDraw OLE object.\n"
+            "Examples:\n"
+            "  embed_cdxml_in_office(cdxml_path='scheme.cdxml', office_path='report.pptx')\n"
+            "  embed_cdxml_in_office(cdxml_path='scheme.cdxml', office_path='report.docx', output_path='report_v2.docx')\n"
+            "Requires: ChemDraw COM (Windows, ChemDraw must be closed), python-pptx or python-docx."
+        )
+
     from cdxml_toolkit.office.ole_embedder import (
         batch_convert,
         get_cdxml_content_size,
@@ -916,6 +1017,16 @@ def search_compound(
         (list with similarity scores), total_files_searched.
         Returns {ok: False, error: "..."} if module unavailable or search fails.
     """
+    if not smiles or not smiles.strip():
+        return (
+            "Usage: search_compound(smiles='...', experiment_dir='path/to/experiments')\n"
+            "Searches reaction JSON files for exact or similar compounds by Tanimoto similarity.\n"
+            "Examples:\n"
+            "  search_compound(smiles='c1ccncc1', experiment_dir='experiments/')\n"
+            "  search_compound(smiles='c1ccncc1', experiment_dir='experiments/', similarity_threshold=0.9)\n"
+            "Tip: get a validated SMILES from resolve_name before searching."
+        )
+
     try:
         from cdxml_toolkit.perception.compound_search import search_compound as _search
     except ImportError as e:
@@ -970,6 +1081,16 @@ def render_to_png(
         Returns {ok: False, error: "..."} if ChemDraw COM is unavailable
         or rendering fails.
     """
+    if not cdxml_path or not cdxml_path.strip():
+        return (
+            "Usage: render_to_png(cdxml_path='scheme.cdxml', output_path='scheme.png')\n"
+            "Renders CDXML to PNG at 300 DPI using ChemDraw COM.\n"
+            "Examples:\n"
+            "  render_to_png(cdxml_path='scheme.cdxml')\n"
+            "  render_to_png(cdxml_path='scheme.cdxml', output_path='figures/scheme.png')\n"
+            "Requires: ChemDraw Professional 16+ on Windows, must be closed before calling."
+        )
+
     try:
         from cdxml_toolkit.chemdraw.cdxml_to_image import cdxml_to_image
     except ImportError as e:
