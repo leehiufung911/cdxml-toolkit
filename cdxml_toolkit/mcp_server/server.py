@@ -50,6 +50,33 @@ mcp = FastMCP(
 # Helpers
 # ---------------------------------------------------------------------------
 
+_TEMP_DIR = os.path.join(os.environ.get("TEMP", os.environ.get("TMP", "/tmp")),
+                         "cdxml-toolkit-output")
+
+
+def _write_output(content, output_path: Optional[str], prefix: str, ext: str) -> dict:
+    """Write content to output_path (or auto-generated temp file) and return metadata.
+
+    Always writes to a file — the agent never receives large inline content.
+    If output_path is None, generates a temp path under _TEMP_DIR.
+    """
+    if output_path is None:
+        os.makedirs(_TEMP_DIR, exist_ok=True)
+        import hashlib, time
+        tag = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
+        output_path = os.path.join(_TEMP_DIR, f"{prefix}_{tag}{ext}")
+
+    os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+    if isinstance(content, str):
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(content)
+    else:
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(content, f, indent=2, default=str)
+
+    return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
+
 def _validate_file(path: str, label: str) -> Path:
     """Resolve and validate that *path* exists and is a file."""
     p = Path(path).resolve()
@@ -340,13 +367,7 @@ def render_scheme(
         scheme = parse_yaml(yaml_str)
         cdxml = render(scheme)
 
-    if output_path:
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(cdxml)
-        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
-
-    return cdxml
+    return _write_output(cdxml, output_path, "scheme", ".cdxml")
 
 
 # ---------------------------------------------------------------------------
@@ -421,13 +442,7 @@ def parse_reaction(
     descriptor = _parse(**kwargs, verbose=False)
     result = descriptor.to_dict()
 
-    if output_path:
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, default=str)
-        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
-
-    return result
+    return _write_output(result, output_path, "reaction", ".json")
 
 
 # ---------------------------------------------------------------------------
@@ -623,13 +638,7 @@ def parse_scheme(
                 "narrative": getattr(desc, "narrative", None),
             }
 
-    if output_path:
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, indent=2, default=str)
-        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
-
-    return result
+    return _write_output(result, output_path, "scheme_parsed", ".json")
 
 
 # ---------------------------------------------------------------------------
@@ -741,13 +750,7 @@ def parse_analysis_file(
         if not isinstance(result, dict):
             result = {"ok": True, "data": result}
 
-        if output_path:
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(result, f, indent=2, default=str)
-            return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
-
-        return result
+        return _write_output(result, output_path, "analysis", ".json")
     except Exception as e:
         return {"ok": False, "error": str(e), "pdf_path": str(p)}
 
@@ -858,13 +861,7 @@ def format_lab_entry(
     try:
         text = process_entries(entries)
 
-        if output_path:
-            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
-
-        return {"ok": True, "text": text}
+        return _write_output(text, output_path, "lab_entry", ".txt")
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
