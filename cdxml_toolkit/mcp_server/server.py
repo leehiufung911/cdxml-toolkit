@@ -81,7 +81,9 @@ def _validate_file(path: str, label: str) -> Path:
     """Resolve and validate that *path* exists and is a file."""
     p = Path(path).resolve()
     if not p.is_file():
-        raise FileNotFoundError(f"{label} not found: {p}")
+        raise FileNotFoundError(
+            f"File not found: {p}. Check the path exists and use forward slashes."
+        )
     return p
 
 
@@ -356,14 +358,54 @@ def render_scheme(
     if yaml_text is not None:
         from cdxml_toolkit.render.parser import parse_yaml
 
-        scheme = parse_yaml(yaml_text)
-        cdxml = render(scheme)
+        try:
+            scheme = parse_yaml(yaml_text)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"YAML parse error: {e}. "
+                    "Correct format: structures: {ID: {smiles: '...'}}, "
+                    "steps: [{substrates: [ID], products: [ID]}]"
+                ),
+            }
+        try:
+            cdxml = render(scheme)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"Render failed: {e}. "
+                    "Check that all structure IDs referenced in steps exist in the structures block "
+                    "and that each SMILES was obtained from resolve_name, not hand-written."
+                ),
+            }
 
     elif compact_text is not None:
         from cdxml_toolkit.render.compact_parser import parse_compact
 
-        scheme = parse_compact(compact_text)
-        cdxml = render(scheme)
+        try:
+            scheme = parse_compact(compact_text)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"Compact text parse error: {e}. "
+                    "Correct format: 'ID: {SMILES}' definitions, then 'A + B --> C' reaction lines "
+                    "with optional 'above:' and 'below:' annotation lines."
+                ),
+            }
+        try:
+            cdxml = render(scheme)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"Render failed: {e}. "
+                    "Check that all structure IDs referenced in the reaction line are defined above "
+                    "and that SMILES strings came from resolve_name."
+                ),
+            }
 
     else:
         # json_path mode — auto-generate YAML then render
@@ -373,10 +415,20 @@ def render_scheme(
         from cdxml_toolkit.render.scheme_yaml_writer import build_scheme_yaml_dict
 
         p = _validate_file(json_path, "JSON file")
-        yaml_dict = build_scheme_yaml_dict(str(p), layout=layout, include_run_arrows=True)
-        yaml_str = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        scheme = parse_yaml(yaml_str)
-        cdxml = render(scheme)
+        try:
+            yaml_dict = build_scheme_yaml_dict(str(p), layout=layout, include_run_arrows=True)
+            yaml_str = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            scheme = parse_yaml(yaml_str)
+            cdxml = render(scheme)
+        except Exception as e:
+            return {
+                "ok": False,
+                "error": (
+                    f"Render from JSON failed: {e}. "
+                    "Ensure the JSON file was produced by parse_reaction and is not corrupted. "
+                    "Try summarize_reaction on it first to verify its contents."
+                ),
+            }
 
     return _write_output(cdxml, output_path, "scheme", ".cdxml")
 
@@ -447,11 +499,23 @@ def parse_reaction(
     if input_dir:
         p = Path(input_dir).resolve()
         if not p.is_dir():
-            raise FileNotFoundError(f"input_dir not found: {p}")
+            raise FileNotFoundError(
+                f"File not found: {p}. Check the path exists and use forward slashes."
+            )
         kwargs["input_dir"] = str(p)
 
-    descriptor = _parse(**kwargs, verbose=False)
-    result = descriptor.to_dict()
+    try:
+        descriptor = _parse(**kwargs, verbose=False)
+        result = descriptor.to_dict()
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": (
+                f"Parse failed: {e}. "
+                "Provide at least one of: cdxml=, csv=, rxn= file paths. "
+                "If using a CDX binary file, convert it first with convert_cdx_cdxml."
+            ),
+        }
 
     return _write_output(result, output_path, "reaction", ".json")
 
@@ -579,7 +643,17 @@ def extract_structures_from_image(
         }
 
     p = _validate_file(image_path, "Image file")
-    return _extract(str(p), detect_labels=detect_labels)
+    try:
+        return _extract(str(p), detect_labels=detect_labels)
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": (
+                f"Image extraction failed: {e}. "
+                "Try again (DECIMER may need more time on first run to load models), "
+                "or use resolve_name() to look up compounds by name instead."
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -705,7 +779,14 @@ def convert_cdx_cdxml(
         out = convert_file(str(p), output_path=output_path)
         return {"ok": True, "input": str(p), "output": str(Path(out).resolve())}
     except Exception as e:
-        return {"ok": False, "error": str(e), "input": str(p)}
+        return {
+            "ok": False,
+            "error": (
+                f"Conversion failed: {e}. "
+                "Ensure ChemDraw is installed and not currently running."
+            ),
+            "input": str(p),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -752,7 +833,10 @@ def parse_analysis_file(
     except ImportError as e:
         return {
             "ok": False,
-            "error": f"parse_analysis_file module not available: {e}",
+            "error": (
+                f"parse_analysis_file module not available: {e}. "
+                "Install with: pip install cdxml-toolkit[analysis]"
+            ),
         }
 
     p = _validate_file(pdf_path, "PDF file")
@@ -763,7 +847,15 @@ def parse_analysis_file(
 
         return _write_output(result, output_path, "analysis", ".json")
     except Exception as e:
-        return {"ok": False, "error": str(e), "pdf_path": str(p)}
+        return {
+            "ok": False,
+            "error": (
+                f"Parse failed: {e}. "
+                "Ensure the PDF is a Waters LCMS report or MestReNova NMR export; "
+                "scanned PDFs without embedded text are not supported."
+            ),
+            "pdf_path": str(p),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -874,7 +966,15 @@ def format_lab_entry(
 
         return _write_output(text, output_path, "lab_entry", ".txt")
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": (
+                f"Entry formatting failed: {e}. "
+                "Check that each entry has a valid 'type' field (text, lcms-species, lcms-areas, "
+                "lcms-manual, nmr) and that PDF paths in 'file' fields exist. "
+                "Call parse_analysis_file on each PDF first to identify peak RTs."
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -925,7 +1025,15 @@ def extract_cdxml_from_office(
             output_format="cdxml",
         )
     except Exception as e:
-        return {"ok": False, "error": str(e), "input": str(p)}
+        return {
+            "ok": False,
+            "error": (
+                f"Extraction failed: {e}. "
+                "Ensure the file is a valid .pptx or .docx and that olefile is installed "
+                "(pip install olefile). The file must contain embedded ChemDraw OLE objects."
+            ),
+            "input": str(p),
+        }
 
     objects = []
     for obj in results:
@@ -1060,7 +1168,14 @@ def embed_cdxml_in_office(
             ),
         }
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": (
+                f"Embedding failed: {e}. "
+                "Ensure ChemDraw is installed and not currently running, "
+                "and that the target file is a valid .pptx or .docx."
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1114,7 +1229,13 @@ def search_compound(
 
     d = Path(experiment_dir).resolve()
     if not d.is_dir():
-        return {"ok": False, "error": f"experiment_dir not found: {d}"}
+        return {
+            "ok": False,
+            "error": (
+                f"File not found: {d}. "
+                "Check the path exists and use forward slashes."
+            ),
+        }
 
     try:
         result = _search(
@@ -1126,7 +1247,14 @@ def search_compound(
             return result
         return {"ok": True, "data": result}
     except Exception as e:
-        return {"ok": False, "error": str(e)}
+        return {
+            "ok": False,
+            "error": (
+                f"Search failed: {e}. "
+                "Ensure the SMILES is valid (use resolve_name to obtain one) "
+                "and that the directory contains reaction JSON files from parse_reaction."
+            ),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -1185,7 +1313,14 @@ def render_to_png(
         out = cdxml_to_image(str(p), output_path=output_path, png_dpi=300)
         return {"ok": True, "input": str(p), "output": str(Path(out).resolve())}
     except Exception as e:
-        return {"ok": False, "error": str(e), "input": str(p)}
+        return {
+            "ok": False,
+            "error": (
+                f"Rendering failed: {e}. "
+                "Ensure ChemDraw Professional 16+ is installed and not currently running."
+            ),
+            "input": str(p),
+        }
 
 
 # ---------------------------------------------------------------------------
