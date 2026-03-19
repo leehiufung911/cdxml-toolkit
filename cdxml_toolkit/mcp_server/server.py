@@ -232,9 +232,19 @@ def render_scheme(
                       Auto-generates YAML layout internally.
 
     Output is ACS Document 1996 style (BondLength=14.40, Arial 10pt).
-    Atom-contributing species (reactants, key intermediates, products) should
-    have drawn structures (SMILES-resolved); text-only labels suit reagents
-    and conditions.
+
+    Layout conventions (important for multi-step schemes):
+    - Atom-contributing species (reactants, key intermediates, products) go
+      on the CENTER LINE as substrates/products — drawn as structures.
+    - Additional reagents, coupling partners, and small molecules go ABOVE
+      or BELOW the arrow as text or small structures.
+    - In sequential multi-step schemes, each step should have only ONE main
+      substrate on the center line.  This allows the renderer to share
+      intermediates between steps (no duplication).  If you put two
+      substrates on the center line (e.g. acid + amine both as substrates),
+      the intermediate cannot be shared and will be drawn twice.
+    - Example: for an amide coupling of intermediate + amine, put the
+      intermediate as the sole substrate and the amine in above_arrow.
 
     Args:
         yaml_text:    YAML scheme descriptor string.
