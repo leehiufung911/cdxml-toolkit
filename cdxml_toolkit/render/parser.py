@@ -594,8 +594,42 @@ def _parse_arrow_content(data: Any, context: str) -> Optional[ArrowContent]:
     """Parse above_arrow or below_arrow content."""
     if data is None:
         return None
+
+    # Normalize: if arrow content is a list, merge into a single dict.
+    # LLMs commonly write: above_arrow: [{structures: [...]}, "text"]
+    # or: above_arrow: [acid_id]  (bare list of structure refs)
+    if isinstance(data, list):
+        merged = {"structures": [], "text": []}
+        for item in data:
+            if isinstance(item, dict):
+                for k, v in item.items():
+                    if k == "structures" and isinstance(v, list):
+                        merged["structures"].extend(v)
+                    elif k == "text":
+                        if isinstance(v, list):
+                            merged["text"].extend(v)
+                        elif isinstance(v, str):
+                            merged["text"].append(v)
+                    elif k == "structure":
+                        # singular "structure: acid_id"
+                        merged["structures"].append(v)
+                    else:
+                        merged["text"].append(str(v))
+            elif isinstance(item, str):
+                # Bare string in list — could be structure ID or text
+                merged["structures"].append(item)
+        data = merged
+
+    # Normalize: if arrow content is a bare string, treat as text
+    if isinstance(data, str):
+        data = {"text": [data]}
+
     if not isinstance(data, dict):
-        raise SchemeParseError(f"'{context}' must be a mapping, got {type(data).__name__}")
+        raise SchemeParseError(
+            f"'{context}' must be a mapping (e.g. {{structures: [ID], text: ['conditions']}}), "
+            f"got {type(data).__name__}. "
+            f"Correct format: above_arrow: {{structures: [ReagentID], text: ['HATU']}}"
+        )
     structures = _as_str_list(data.get("structures", []), f"{context}.structures")
     text = _as_str_list(data.get("text", []), f"{context}.text")
     if not structures and not text:
