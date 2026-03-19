@@ -266,7 +266,18 @@ def draw_molecule(mol_json: dict, output_path: Optional[str] = None) -> dict:
 
     from cdxml_toolkit.naming.mol_builder import draw_molecule as _draw
 
-    return _draw(mol_json, output_path=output_path)
+    result = _draw(mol_json, output_path=output_path)
+
+    # Always write to file — don't return large CDXML inline
+    if isinstance(result, dict) and result.get("ok") and "cdxml" in result:
+        cdxml = result["cdxml"]
+        path = result.get("output_path") or output_path
+        out = _write_output(cdxml, path, "molecule", ".cdxml")
+        out["name"] = mol_json.get("name") or mol_json.get("iupac_name") or ""
+        out["smiles"] = mol_json.get("smiles", "")
+        return out
+
+    return result
 
 
 # ---------------------------------------------------------------------------
