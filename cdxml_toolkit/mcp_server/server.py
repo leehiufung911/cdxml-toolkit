@@ -222,32 +222,61 @@ def render_scheme(
     """Render a chemical reaction scheme to publication-ready CDXML.
 
     Accepts exactly ONE input mode:
-    1. yaml_text    — YAML scheme descriptor string (from write_scheme_yaml,
-                      possibly hand-edited). Full layout control.
-    2. compact_text — Compact DSL string, like "Mermaid for reactions":
-                      "ArBr + Amine --> Product (72%)"
-                      "  above: Amine"
-                      "  below: \"Pd2(dba)3\", \"BINAP\", \"toluene, 110C\""
+    1. yaml_text    — YAML scheme descriptor string.  Write the YAML yourself
+                      using the schema below.  This is the most flexible mode.
+    2. compact_text — Compact DSL string (Mermaid-like).
     3. json_path    — Path to a reaction JSON file from parse_reaction.
                       Auto-generates YAML layout internally.
 
     Output is ACS Document 1996 style (BondLength=14.40, Arial 10pt).
 
-    Layout conventions (important for multi-step schemes):
-    - Atom-contributing species (reactants, key intermediates, products) go
-      on the CENTER LINE as substrates/products — drawn as structures.
-    - Additional reagents, coupling partners, and small molecules go ABOVE
-      or BELOW the arrow as text or small structures.
-    - In sequential multi-step schemes, each step should have only ONE main
-      substrate on the center line.  This allows the renderer to share
-      intermediates between steps (no duplication).  If you put two
-      substrates on the center line (e.g. acid + amine both as substrates),
-      the intermediate cannot be shared and will be drawn twice.
-    - Example: for an amide coupling of intermediate + amine, put the
-      intermediate as the sole substrate and the amine in above_arrow.
+    YAML SCHEMA (for yaml_text mode):
+
+        layout: sequential       # linear | sequential | stacked-rows
+        source: reaction.json    # optional — resolve SMILES by species ID from this JSON
+        structures:
+          SM:
+            smiles: "CCO"        # required unless source JSON provides it
+            label: "Ethanol"     # optional label below structure
+          Reagent:
+            smiles: "O=C(O)c1cccnc1F"
+          Product:
+            smiles: "CC=O"
+        steps:
+          - substrates: [SM]           # list of structure IDs on center line
+            products: [Product]        # list of structure IDs on center line
+            above_arrow:
+              structures: [Reagent]    # drawn structures above arrow
+              text:
+                - "HATU (1.5 eq)"      # text labels above arrow
+            below_arrow:
+              text:
+                - "DMF, rt, 2 h"       # text labels below arrow
+
+        # For stacked-rows (multiple independent reactions):
+        sections:
+          - label: "(i)"
+            steps:
+              - substrates: [A]
+                products: [B]
+                below_arrow:
+                  text: ["HCl (10 eq)", "Dioxane"]
+          - label: "(ii)"
+            steps:
+              - substrates: [C]
+                products: [D]
+                below_arrow:
+                  text: ["HCl (10 eq)", "Dioxane"]
+
+    Layout conventions:
+    - ONE main substrate on center line per step.  Additional reagents go
+      ABOVE the arrow (in above_arrow.structures or above_arrow.text).
+      This lets the renderer share intermediates between sequential steps.
+    - Atom-contributing species → drawn structures (center line).
+    - Catalysts, bases, solvents → text labels (above/below arrow).
 
     Args:
-        yaml_text:    YAML scheme descriptor string.
+        yaml_text:    YAML scheme descriptor string (see schema above).
         compact_text: Compact DSL syntax string.
         json_path:    Path to a reaction JSON file.
         layout:       Layout mode for json_path auto-generation:
