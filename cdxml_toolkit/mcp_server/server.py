@@ -252,6 +252,7 @@ def render_scheme(
     compact_text: Optional[str] = None,
     json_path: Optional[str] = None,
     layout: str = "auto",
+    output_path: Optional[str] = None,
 ) -> str:
     """Render a chemical reaction scheme to publication-ready CDXML.
 
@@ -271,9 +272,13 @@ def render_scheme(
         compact_text: Compact DSL syntax string.
         json_path:    Path to a reaction JSON file.
         layout:       Layout for json_path: "auto", "landscape", "portrait".
+        output_path:  If given, write the CDXML to this file and return
+                      {ok, output_path, size} instead of the raw CDXML string.
 
     Returns:
-        CDXML string, or YAML schema reference if called with no arguments.
+        CDXML string (when output_path is None), or {ok, output_path, size}
+        when output_path is provided, or YAML schema reference if called with
+        no arguments.
     """
     from cdxml_toolkit.render.renderer import render
 
@@ -304,7 +309,8 @@ def render_scheme(
             "      steps: [{substrates: [A], products: [B], ...}]\n"
             "    - label: \"(ii)\"\n"
             "      steps: [{substrates: [C], products: [D], ...}]\n\n"
-            "Convention: ONE substrate on center line per step. Reagents go in above_arrow."
+            "Convention: ONE substrate on center line per step. Reagents go in above_arrow.\n"
+            "output_path: optional — write CDXML to file and get {ok, output_path, size} back."
         )
     if modes > 1:
         raise ValueError("Provide only ONE of: yaml_text, compact_text, or json_path.")
@@ -313,25 +319,34 @@ def render_scheme(
         from cdxml_toolkit.render.parser import parse_yaml
 
         scheme = parse_yaml(yaml_text)
-        return render(scheme)
+        cdxml = render(scheme)
 
-    if compact_text is not None:
+    elif compact_text is not None:
         from cdxml_toolkit.render.compact_parser import parse_compact
 
         scheme = parse_compact(compact_text)
-        return render(scheme)
+        cdxml = render(scheme)
 
-    # json_path mode — auto-generate YAML then render
-    import yaml
+    else:
+        # json_path mode — auto-generate YAML then render
+        import yaml
 
-    from cdxml_toolkit.render.parser import parse_yaml
-    from cdxml_toolkit.render.scheme_yaml_writer import build_scheme_yaml_dict
+        from cdxml_toolkit.render.parser import parse_yaml
+        from cdxml_toolkit.render.scheme_yaml_writer import build_scheme_yaml_dict
 
-    p = _validate_file(json_path, "JSON file")
-    yaml_dict = build_scheme_yaml_dict(str(p), layout=layout, include_run_arrows=True)
-    yaml_str = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    scheme = parse_yaml(yaml_str)
-    return render(scheme)
+        p = _validate_file(json_path, "JSON file")
+        yaml_dict = build_scheme_yaml_dict(str(p), layout=layout, include_run_arrows=True)
+        yaml_str = yaml.dump(yaml_dict, default_flow_style=False, allow_unicode=True, sort_keys=False)
+        scheme = parse_yaml(yaml_str)
+        cdxml = render(scheme)
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(cdxml)
+        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
+    return cdxml
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +360,7 @@ def parse_reaction(
     csv: Optional[str] = None,
     rxn: Optional[str] = None,
     input_dir: Optional[str] = None,
+    output_path: Optional[str] = None,
 ) -> dict:
     """Parse reaction files into a semantic JSON descriptor.
 
@@ -358,17 +374,20 @@ def parse_reaction(
     to merge structural data with ELN metadata.
 
     Args:
-        cdxml:      Path to a .cdxml reaction file.
-        cdx:        Path to a .cdx reaction file (converted internally).
-        csv:        Path to a Findmolecule ELN CSV export.
-        rxn:        Path to a .rxn file.
-        input_dir:  Directory containing experiment files (auto-discovers
-                    cdxml/cdx/csv/rxn by experiment ID).
+        cdxml:       Path to a .cdxml reaction file.
+        cdx:         Path to a .cdx reaction file (converted internally).
+        csv:         Path to a Findmolecule ELN CSV export.
+        rxn:         Path to a .rxn file.
+        input_dir:   Directory containing experiment files (auto-discovers
+                     cdxml/cdx/csv/rxn by experiment ID).
+        output_path: If given, write the result JSON to this file and return
+                     {ok, output_path} instead of the full dict.
 
     Returns:
         Reaction descriptor dict with keys: version, experiment, input_files,
         reaction_smiles, reaction_class, species (list with role, smiles,
         formula, mw, etc.), conditions, and eln_data.
+        When output_path is provided, returns {ok, output_path} instead.
     """
     if not any([cdxml, cdx, csv, rxn, input_dir]):
         return (
@@ -378,6 +397,7 @@ def parse_reaction(
             "  parse_reaction(cdxml='experiment.cdxml')\n"
             "  parse_reaction(cdxml='experiment.cdxml', csv='experiment.csv')\n"
             "  parse_reaction(input_dir='experiments/KL-CC-001/')  # auto-discovers files\n"
+            "  parse_reaction(cdxml='experiment.cdxml', output_path='reaction.json')  # save to file\n"
             "Returns: reaction descriptor JSON with species, roles, SMILES, conditions."
         )
 
@@ -399,7 +419,15 @@ def parse_reaction(
         kwargs["input_dir"] = str(p)
 
     descriptor = _parse(**kwargs, verbose=False)
-    return descriptor.to_dict()
+    result = descriptor.to_dict()
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, default=str)
+        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -533,7 +561,10 @@ def extract_structures_from_image(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def parse_scheme(cdxml_path: str) -> dict:
+def parse_scheme(
+    cdxml_path: str,
+    output_path: Optional[str] = None,
+) -> dict:
     """Parse a CDXML reaction scheme into a structured description.
 
     Reads a CDXML file containing a reaction scheme (single- or multi-step) and
@@ -546,7 +577,9 @@ def parse_scheme(cdxml_path: str) -> dict:
     "footnote", "yield", "compound_label", "citation", or "bioactivity".
 
     Args:
-        cdxml_path: Path to a CDXML file containing a reaction scheme.
+        cdxml_path:  Path to a CDXML file containing a reaction scheme.
+        output_path: If given, write the result JSON to this file and return
+                     {ok, output_path, size} instead of the full dict.
 
     Returns:
         Dict with keys: source_file, species (dict of species records with
@@ -554,13 +587,14 @@ def parse_scheme(cdxml_path: str) -> dict:
         reactant/product/reagent species IDs and conditions), topology
         (linear/parallel/convergent/divergent), content_type, narrative
         (human-readable summary), and optionally sub_schemes for multi-panel
-        files.
+        files. When output_path is provided, returns {ok, output_path, size}.
     """
     if not cdxml_path or not cdxml_path.strip():
         return (
             "Usage: parse_scheme(cdxml_path='scheme.cdxml')\n"
             "Reads a CDXML scheme and returns species, steps, topology, and narrative.\n"
             "Example: parse_scheme(cdxml_path='experiments/KL-CC-001/scheme.cdxml')\n"
+            "  parse_scheme(cdxml_path='scheme.cdxml', output_path='parsed.json')  # save to file\n"
             "Returns: {species, steps, topology, content_type, narrative}"
         )
 
@@ -588,6 +622,13 @@ def parse_scheme(cdxml_path: str) -> dict:
                 "content_type": getattr(desc, "content_type", None),
                 "narrative": getattr(desc, "narrative", None),
             }
+
+    if output_path:
+        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, default=str)
+        return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
     return result
 
 
@@ -652,7 +693,10 @@ def convert_cdx_cdxml(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def parse_analysis_file(pdf_path: str) -> dict:
+def parse_analysis_file(
+    pdf_path: str,
+    output_path: Optional[str] = None,
+) -> dict:
     """Parse an LCMS or NMR analysis PDF to extract peaks and data.
 
     Supports Waters LCMS reports and MestReNova NMR PDFs. Returns structured
@@ -662,11 +706,14 @@ def parse_analysis_file(pdf_path: str) -> dict:
     a graceful error rather than crashing.
 
     Args:
-        pdf_path: Path to an LCMS or NMR PDF report.
+        pdf_path:    Path to an LCMS or NMR PDF report.
+        output_path: If given, write the parsed data as JSON to this file and
+                     return {ok, output_path, size} instead of the full dict.
 
     Returns:
         For LCMS: dict with retention_times, peak_areas, masses, UV traces.
         For NMR: dict with chemical_shifts, multiplicities, integrations.
+        When output_path is provided, returns {ok, output_path, size}.
         Returns {ok: False, error: "..."} if module unavailable or parse fails.
     """
     if not pdf_path or not pdf_path.strip():
@@ -676,6 +723,7 @@ def parse_analysis_file(pdf_path: str) -> dict:
             "Examples:\n"
             "  parse_analysis_file(pdf_path='lcms/t0.pdf')\n"
             "  parse_analysis_file(pdf_path='nmr/product_1H.pdf')\n"
+            "  parse_analysis_file(pdf_path='lcms/t0.pdf', output_path='t0_parsed.json')  # save to file\n"
             "Returns: retention times, peak areas, masses (LCMS) or shifts/multiplicities (NMR)."
         )
 
@@ -690,9 +738,16 @@ def parse_analysis_file(pdf_path: str) -> dict:
     p = _validate_file(pdf_path, "PDF file")
     try:
         result = _parse(str(p))
-        if isinstance(result, dict):
-            return result
-        return {"ok": True, "data": result}
+        if not isinstance(result, dict):
+            result = {"ok": True, "data": result}
+
+        if output_path:
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, default=str)
+            return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
+        return result
     except Exception as e:
         return {"ok": False, "error": str(e), "pdf_path": str(p)}
 
@@ -702,7 +757,10 @@ def parse_analysis_file(pdf_path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def format_lab_entry(entries_json: Any) -> dict:
+def format_lab_entry(
+    entries_json: Any,
+    output_path: Optional[str] = None,
+) -> dict:
     """Format a list of entry dicts into a structured lab book text entry.
 
     Takes a list of typed entry dicts (or a JSON string) and produces a
@@ -758,9 +816,12 @@ def format_lab_entry(entries_json: Any) -> dict:
 
     Args:
         entries_json: List of entry dicts, or a JSON string, or {"entries": [...]}.
+        output_path:  If given, write the formatted text to this file and return
+                      {ok, output_path, size} instead of {ok, text}.
 
     Returns:
         Dict with keys: ok, text (formatted lab book entry string).
+        When output_path is provided, returns {ok, output_path, size} instead.
     """
     # Return usage if called with empty/null-ish input
     if entries_json is None or entries_json == [] or entries_json == {} or entries_json == "":
@@ -771,7 +832,8 @@ def format_lab_entry(entries_json: Any) -> dict:
             "  {type:'lcms-species', file:'report.pdf', label:'t=0', peaks:[{name:'Product', rt:1.02, ion:{mode:'ES+', mz:445.1}}]}\n"
             "  {type:'lcms-areas', file:'report.pdf', label:'t=10 min', peaks:[{name:'Product', rt:1.03, compound_related:true}]}\n"
             "  {type:'nmr', content:'1H NMR (400 MHz, DMSO-d6): ...'}\n"
-            "Workflow: call parse_analysis_file on each PDF first to identify peaks/RTs."
+            "Workflow: call parse_analysis_file on each PDF first to identify peaks/RTs.\n"
+            "output_path: optional — write formatted text to file and get {ok, output_path, size} back."
         )
 
     from cdxml_toolkit.analysis.format_procedure_entry import process_entries
@@ -795,6 +857,13 @@ def format_lab_entry(entries_json: Any) -> dict:
 
     try:
         text = process_entries(entries)
+
+        if output_path:
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
+
         return {"ok": True, "text": text}
     except Exception as e:
         return {"ok": False, "error": str(e)}
