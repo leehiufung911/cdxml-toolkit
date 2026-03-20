@@ -1,280 +1,206 @@
 # cdxml-toolkit
 
-> **WORK IN PROGRESS** — This project is under active development. Expect breaking changes, missing features, and rough edges. Do NOT be surprised if things don't work.
+Chemistry office automation toolkit with MCP (Model Context Protocol) server. Lets LLM agents draw reaction schemes, parse ELN exports, analyze LCMS data, and produce publication-ready ChemDraw (CDXML) output.
 
-Python toolkit for ChemDraw CDXML reaction scheme processing, layout, and rendering.
+The goal: any chemist with a consumer GPU can run a local LLM agent that helps with routine chemistry office tasks. The toolkit provides 15 grounded, validated chemistry tools that LLMs call via MCP — the agent reasons about chemistry while the tools handle SMILES resolution, 2D coordinate generation, and CDXML layout.
 
-Built for organic/medicinal chemists who work with reaction schemes in ChemDraw. Reads, writes, and manipulates CDXML files programmatically — build publication-ready reaction schemes from SMILES, clean up ELN exports, render schemes from declarative YAML, and more.
+> Built and tested with Claude Code (Opus 4.6). I directed the design and architecture; Claude did the implementation. I'm a PhD organic chemist, not a programmer — this project wouldn't exist without Anthropic's tools.
 
-TLDR: Best feature currently is being able to specify a reaction scheme in a text format (YAML or mermaid like) and get a .cdxml chemdraw scheme. Lots of other little utilities also, like OLE embedding into docx/pptx
+## Quick start: MCP server
 
-PROJECT INTENT:
-Broadly/in the long run, to build out a toolkit to make organic chemistry office work more automatable (A LOT of which involves chemdraw)
-Such tools may be run on their own, or as I envision, used/called by an LLM agent
+The primary interface is the MCP server. Connect it to any MCP-compatible agent (Claude Desktop, opencode, qwen-agent, etc.) and just chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
 
-(Prime example: DSL which allows LLM to write a YAML or mermaid description of a scheme, which is then rendered into a .cdxml using renderer.py)
+### Claude Desktop
 
-There are a bunch of dependencies that are easy to install (RDKit), some that may be more finnicky (Chemscript, Chemdraw if it doesn't autodetect. **Chemdraw (COM) is an IMPORTANT DEPENDENCY. There are fallbacks, but I haven't validated how well they work**)
-This was made on a machine with Chemdraw 16.
-I will validate and fix things gradually.
+Edit `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac):
 
-Professionally, I do not have much programming background. I am a just a PhD organic chemist trying to make life easier hopefully for myself and my fellow chemists.
+```json
+{
+  "mcpServers": {
+    "cdxml-toolkit": {
+      "command": "python",
+      "args": ["-m", "cdxml_toolkit.mcp_server"]
+    }
+  }
+}
+```
 
-**I leaned heavily on Claude Code in the making of this project.** I directed, refined, debugged, and figured out the broad design of things, but Claude Code (Opus 4.6) did basically all of the actual coding.
+### opencode (for OpenRouter / local models)
 
-Note that LLMs (even frontier models) are terrible at judging whether a chemical structure is correct, as well as whether a scheme is correctly spaced... they're even bad at writing SMILES. This is why the design decision was made to have a source of chemical truth (JSON, parsed from CDX files/other ELN files), have a script or an LLM declare the layout of a scheme with a YAML file (but not actually place objects), and have a layout engine (renderer.py) deterministically place objects at the right places. This affords flexibility for the LLM to choose the scheme layout it wants, but avoids its weaknesses of being bad at chemistry and layout/design.
+Create `opencode.json`:
 
-I would like to express immense gratitude to Anthropic for making such a revolutionary product. Without it, these ideas would only be random musings in my brain, since I do not have the programming skill to implement any of this in any reasonable amount of time otherwise.
+```json
+{
+  "provider": {
+    "openrouter": {
+      "models": { "qwen/qwen3.5-27b": {} }
+    }
+  },
+  "mcp": {
+    "cdxml-toolkit": {
+      "type": "local",
+      "command": ["python", "-m", "cdxml_toolkit.mcp_server"],
+      "enabled": true,
+      "timeout": 120000
+    }
+  }
+}
+```
+
+### Verify it works
+
+```
+> Use cdxml-toolkit. Resolve "aspirin", then draw it.
+```
+
+Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML file.
+
+## MCP tools (15)
+
+### Chemistry resolution
+| Tool | Description |
+|------|-------------|
+| `resolve_name` | Name/abbreviation/CAS/formula to rich molecule JSON (4-tier: reagent DB, condensed formula, ChemScript, PubChem) |
+| `modify_molecule` | 6 operations: analyze, name_surgery, smarts, set_smiles, set_name, reaction. 162 named reaction templates. Returns MCS-based structural diffs. |
+
+### Structure rendering
+| Tool | Description |
+|------|-------------|
+| `draw_molecule` | Single molecule to CDXML |
+| `render_scheme` | YAML/compact text/reaction JSON to publication-ready CDXML. Forgiving parser handles common LLM YAML mistakes. |
+
+### Perception (reading existing chemistry)
+| Tool | Description |
+|------|-------------|
+| `parse_reaction` | ELN exports (CDXML/CDX/CSV/RXN) to semantic JSON with species, roles, SMILES, equivalents |
+| `summarize_reaction` | Context-efficient view of reaction JSON (select only the fields you need) |
+| `extract_structures_from_image` | Image to SMILES + confidence scores via DECIMER neural network |
+| `parse_scheme` | CDXML scheme to structured species/steps/topology JSON |
+
+### Analysis
+| Tool | Description |
+|------|-------------|
+| `parse_analysis_file` | LCMS (Waters/manual) or NMR (MestReNova) PDF to structured peak data |
+| `format_lab_entry` | Structured entry dicts to formatted lab book text. Re-reads LCMS PDFs for exact numbers. |
+
+### Office integration
+| Tool | Description |
+|------|-------------|
+| `extract_cdxml_from_office` | Pull embedded ChemDraw OLE objects from PPTX/DOCX |
+| `embed_cdxml_in_office` | Inject CDXML as editable ChemDraw OLE into PPTX/DOCX |
+| `convert_cdx_cdxml` | Bidirectional CDX/CDXML conversion |
+| `search_compound` | Find a molecule across experiment directories by SMILES similarity |
+| `render_to_png` | CDXML to PNG via ChemDraw COM |
+
+## Design principles
+
+**Never trust LLM-generated SMILES.** The agent always goes through `resolve_name` to get grounded SMILES from databases. Direct SMILES generation is the #1 source of chemistry hallucination.
+
+**Verify every transformation.** `modify_molecule` returns aligned IUPAC name diffs and MCS-based molecular diffs after every edit. The agent can confirm the transformation is correct.
+
+**Never flood the agent.** Large outputs (CDXML, JSON) always write to files and return `{ok: true, output_path: "...", size: 23456}`. The agent never gets 30KB of XML in its context window.
+
+**Forgiving inputs.** The YAML parser accepts 9+ common LLM mistakes (inline structures, `substrates` as alias for `structures`, text as string not list, bare SMILES, `above_arrow` as list/string). Input parameters accept bare SMILES strings, stringified JSON arrays, and fuzzy operation names.
+
+**Actionable errors.** Every error tells the agent what to do instead: "Did you mean: BOC_deprotection?", not "KeyError".
+
+**Progressive discovery.** Call any tool with no arguments to get usage examples and schema reference.
+
+## Tested across model tiers
+
+| Model | Score | Notes |
+|-------|:-----:|-------|
+| Sonnet 4.6 (MCP) | 10/10 | Zero patches needed, 444k tokens |
+| Haiku 4.5 (MCP) | 10/10 | Most token-efficient |
+| Qwen 3.5 27B (MCP) | 9/10 | Via opencode + OpenRouter |
+| Qwen 3.5 9B (qwen-agent) | 4/10 | Requires qwen-agent framework for multi-turn |
+| Ministral 8B (MCP) | 3/3 | 3-task benchmark; runs on a laptop |
 
 ## Installation
 
 ```bash
-# Core package (CDXML manipulation, no external dependencies beyond lxml)
-pip install cdxml-toolkit
+# Core + RDKit (recommended minimum)
+pip install -e ".[rdkit]"
 
-# With RDKit support (structure alignment, MW calculation, 2D coord generation)
-pip install cdxml-toolkit[rdkit]
+# Everything (RDKit + ChemDraw COM + PDF parsing + Office + MCP)
+pip install -e ".[all]"
 
-# Everything (RDKit + ChemDraw COM + PDF parsing + Office document support)
-pip install cdxml-toolkit[all]
-
-# Development install from source
+# Development
 git clone https://github.com/leehiufung911/cdxml-toolkit.git
 cd cdxml-toolkit
 pip install -e ".[dev]"
 ```
 
-## Quick(?) Start
+**Required:** `lxml>=4.6`. **Recommended:** `rdkit>=2023.03` (needed for scheme rendering).
 
-Honestly? Maybe try using this repository with Claude Code/Opencode/Windsurf/another agent. The endgame is meant to be like "Hey, help me make the scheme for these reactions", and the agent just goes and does the things you ask.
-I uploaded a CLAUDE.MD. This is meant to be read as reference by both humans and LLMs.
+| Optional | What it enables | Install extra |
+|----------|----------------|---------------|
+| RDKit | SMILES, 2D coords, MW, structure alignment | `[rdkit]` |
+| pywin32 | ChemDraw COM automation (Windows) | `[chemdraw]` |
+| python-pptx, python-docx, olefile | Office document support | `[office]` |
+| DECIMER, opencv-python | Image structure extraction | `[image]` |
+| pdfplumber | LCMS/NMR PDF parsing | `[analysis]` |
+| mcp | MCP server | `[mcp]` |
 
-## Quick Start — JSON-First Pipeline
+## CLI tools
 
-The recommended workflow builds publication-ready schemes from ELN export files in two steps:
+All tools are also available as command-line scripts:
 
+| Command | Description |
+|---------|-------------|
+| `cdxml-mcp` | MCP server (primary interface) |
+| `cdxml-parse` | Parse reaction files to JSON |
+| `cdxml-render` | Render JSON/YAML/compact text to CDXML |
+| `cdxml-convert` | CDX/CDXML bidirectional conversion |
+| `cdxml-image` | CDXML to PNG/SVG (ChemDraw COM) |
+| `cdxml-merge` | Merge multiple reaction schemes |
+| `cdxml-layout` | Clean up reaction layout (pure Python) |
+| `cdxml-ole` | Embed CDXML as editable OLE in PPTX/DOCX |
+| `cdxml-lcms` | Parse LCMS PDF reports |
+| `cdxml-nmr` | Extract NMR data from MestReNova PDFs |
+| `cdxml-format-entry` | Format lab book entries |
+| `cdxml-discover` | Discover experiment files in a directory |
+
+## Scheme DSL
+
+The renderer accepts three input formats:
+
+**YAML** (what agents typically write):
+```yaml
+layout: sequential
+structures:
+  SM:
+    smiles: "Brc1ncnc2sccc12"
+  Product:
+    smiles: "c1nc(N2CCOCC2)c2ccsc2n1"
+steps:
+  - substrates: [SM]
+    products: [Product]
+    above_arrow:
+      structures: [Morph]
+    below_arrow:
+      text: ["Pd2(dba)3", "BINAP", "Cs2CO3", "Dioxane, 105 C"]
+```
+
+**Compact text** ("Mermaid for reactions"):
+```
+SM: {Brc1ncnc2sccc12}
+SM --> Product{c1nc(N2CCOCC2)c2ccsc2n1}
+  above: Morph{C1COCCN1}
+  below: "Pd2(dba)3", "BINAP", "Cs2CO3"
+```
+
+**Reaction JSON** (from parse_reaction):
 ```bash
-# Step 1: Parse reaction files -> semantic JSON
-cdxml-parse experiment.cdxml --csv experiment.csv -o reaction.json
-
-# Step 2: Render JSON -> publication-ready CDXML
 cdxml-render --from-json reaction.json -o scheme.cdxml
 ```
 
-The reaction parser extracts every species (structures, reagents, solvents, products) with canonical SMILES, roles, equivalents, and mass data. The renderer turns that into a properly laid-out scheme — no manual positioning needed.
-
-If your input is CDX (binary ChemDraw), convert first:
+## Running tests
 
 ```bash
-cdxml-convert experiment.cdx -o experiment.cdxml
+pip install -e ".[dev]"
+pytest tests/ -v
 ```
-
-### Python API
-
-```python
-from cdxml_toolkit.perception import parse_reaction
-from cdxml_toolkit.render import render_to_file
-
-# Parse
-desc = parse_reaction(cdxml="experiment.cdxml", csv="experiment.csv")
-desc.to_json("reaction.json")
-
-# Render
-from cdxml_toolkit.render.auto_layout import auto_layout_to_cdxml
-auto_layout_to_cdxml("reaction.json", "scheme.cdxml")
-```
-
-### Other input formats
-
-The renderer also accepts hand-authored YAML or compact text syntax:
-
-```bash
-# YAML input
-cdxml-render scheme.yaml -o scheme.cdxml
-
-# Compact text ("Mermaid for reactions")
-cdxml-render scheme.txt -o scheme.cdxml
-```
-
-### Reagent database
-
-```python
-from cdxml_toolkit import get_reagent_db
-
-db = get_reagent_db()
-db.display_for_name("cs2co3")    # "Cs2CO3"
-db.role_for_name("cs2co3")       # "base"
-db.display_for_name("hatu")      # "HATU" (from ChemScanner tier-2)
-```
-
-## Features
-
-- **Reaction parser** — Unified semantic layer: CDX/CDXML/RXN/CSV -> JSON with canonical SMILES, roles, equivalents, masses, and adducts. The single source of truth for all downstream tools.
-- **Scheme DSL renderer** — JSON/YAML/compact text -> publication-ready CDXML. 6 layout engines (linear, sequential, serpentine, divergent, stacked-rows, numbered-parallel). Run arrows, dashed/failed arrows, compound labels. No ChemDraw COM needed — uses RDKit for 2D coordinate generation.
-- **Mol builder** — Agent API for compound name resolution (reagent DB -> condensed formula -> OPSIN -> PubChem), reaction template application, deprotection, and IUPAC name surgery. Exports LLM function-calling schemas.
-- **LCMS analysis** — Parse Waters and manual LCMS PDFs, identify species by mass, cross-file collation.
-- **Lab book formatting** — Agent-driven procedure entry formatting from parsed reaction data.
-- **Scheme merger** — Combine multiple reaction schemes with auto-detected relationships (parallel, sequential, unrelated).
-- **CDXML reading/writing** — Parse and write CDXML with DOCTYPE preservation. Atom-only bounding boxes (reliable for abbreviation groups). Hanging label detection.
-- **Chemical text formatting** — Subscript digits in formulas (CH3OH), italic IUPAC prefixes (*n*-BuLi, *tert*-BuOH).
-- **Reagent database** — Two-tier lookup: ~186 curated entries with roles + ~5,837 ChemScanner entries. SMILES-based and name-based matching.
-- **Superatom table** — ~2,850 abbreviation->SMILES mappings for MW calculation of ChemDraw abbreviation groups (OTs, Boc, Me, etc.).
-- **RDKit bridge** — CDXML fragment -> RDKit Mol, SMILES, MW. 2D coordinate cleanup with Kabsch orientation preservation.
-- **Reaction layout** — Pure Python replacement for ChemDraw COM "Clean Up Reaction". 6 layout approaches including `chemdraw_mimic` (default).
-- **Structure alignment** — Kabsch, RDKit MCS, and RXNMapper-based orientation alignment.
-- **OLE embedding** — Embed CDXML as editable ChemDraw objects in PPTX/DOCX.
-- **MCP server** — Model Context Protocol server for tool integration (skeleton).
-
-## Requirements
-
-- **Python >= 3.9**
-- **lxml** — core dependency (always required)
-
-| Optional dependency | What it enables | Install extra |
-|---|---|---|
-| RDKit | Structure alignment, MW calculation, SMILES, 2D coords | `[rdkit]` |
-| PyYAML | YAML scheme parsing | `[yaml]` |
-| pywin32 | ChemDraw COM automation (Windows only) | `[chemdraw]` |
-| python-pptx, python-docx, olefile | Office document support | `[office]` |
-| OpenCV, Pillow | Image-based structure extraction | `[image]` |
-| pdfplumber | LCMS PDF parsing | `[analysis]` |
-| mcp | MCP server | `[mcp]` |
-
-## CLI Tools
-
-Installed as console scripts:
-
-| Command | Description |
-|---|---|
-| `cdxml-parse` | Parse reaction files -> JSON descriptor (**start here**) |
-| `cdxml-render` | Render JSON/YAML/compact text -> CDXML scheme |
-| `cdxml-convert` | CDX <-> CDXML conversion |
-| `cdxml-image` | Render CDXML to PNG/SVG (ChemDraw COM) |
-| `cdxml-merge` | Merge multiple reaction schemes |
-| `cdxml-layout` | Clean up reaction layout (pure Python, no COM) |
-| `cdxml-build` | Build CDXML from atom/bond data |
-| `cdxml-polish` | Full scheme polishing pipeline (legacy) |
-| `cdxml-ole` | Embed CDXML as editable OLE in PPTX/DOCX |
-| `cdxml-mcp` | MCP server |
-| `cdxml-lcms` | Parse single LCMS PDF report |
-| `cdxml-multi-lcms` | Cross-file LCMS collation |
-| `cdxml-procedure` | Assemble lab book entries |
-| `cdxml-discover` | Discover experiment files in a directory |
-| `cdxml-format-entry` | Agent-driven lab book entry formatting |
-| `cdxml-nmr` | Extract NMR data from MestReNova PDFs |
-
-All tools also work as Python modules:
-```bash
-python -m cdxml_toolkit.perception.reaction_parser experiment.cdxml --csv exp.csv -o reaction.json
-python -m cdxml_toolkit.render.render_scheme --from-json reaction.json -o scheme.cdxml
-```
-
-## Layout Patterns
-
-The DSL renderer supports 5 layout patterns. The layout is auto-selected based on the reaction JSON, or you can override it:
-
-| Layout | Description |
-|---|---|
-| `linear` | Default. Single-step reaction |
-| `sequential` | Multi-step with shared intermediates drawn once |
-| `divergent` | One starting material -> multiple products |
-| `stacked-rows` | Independent rows with optional section labels |
-| `serpentine` | Alternating direction rows (left->right, right->left) |
-
-No ChemDraw COM needed — structures are generated from SMILES via RDKit.
-
-## Bundled Samples
-
-The `samples/` directory contains two real ELN exports (Buchwald coupling, SNAr alkylation) with full pipeline output:
-
-```
-samples/
-├── KL-CC-001/         # Buchwald coupling (single-step)
-│   ├── KL-CC-001.cdx  # ELN export (binary ChemDraw)
-│   ├── KL-CC-001.csv  # ELN export (reagent table)
-│   ├── KL-CC-001.rxn  # ELN export (RXN file)
-│   ├── reaction.json  # Parsed reaction (cdxml-parse output)
-│   ├── scheme.yaml    # Auto-generated YAML
-│   └── scheme.cdxml   # Rendered scheme (cdxml-render output)
-│
-├── KL-CC-002/         # SNAr alkylation (single-step)
-│   └── ...            # Same structure as KL-CC-001
-│
-└── consolidated/      # Two-step sequential scheme
-    ├── two-step-scheme.yaml   # Hand-authored sequential YAML
-    └── two-step-scheme.cdxml  # Rendered two-step scheme
-```
-
-## Package Structure
-
-```
-cdxml_toolkit/
-│
-│  # ── Foundation ─────────────────────────────────────────
-├── __init__.py                 # Version, core exports
-├── constants.py                # ACS Document 1996 style, layout gaps
-├── cdxml_utils.py              # CDXML geometry (bbox, IO, id map)
-├── rdkit_utils.py              # CDXML fragment <-> RDKit Mol/SMILES/MW
-├── text_formatting.py          # Chemical subscripts + italic prefixes
-├── cdxml_builder.py            # Build CDXML from atom/bond data
-├── coord_normalizer.py         # Coordinate normalization to ACS 1996
-│
-│  # ── Subpackages ────────────────────────────────────────
-├── perception/                 # Read and understand reaction schemes
-│   ├── reaction_parser.py      # ELN exports -> JSON reaction descriptor
-│   ├── scheme_reader.py        # CDXML -> SchemeDescription JSON
-│   ├── scheme_segmenter.py     # Multi-panel CDXML auto-segmentation
-│   ├── reactant_heuristic.py   # Reagent role classification (FP + MCS)
-│   └── ...
-│
-├── resolve/                    # Chemical name/formula -> SMILES
-│   ├── reagent_db.py           # Curated reagent DB (~186 entries)
-│   ├── condensed_formula.py    # Generative parser (PhB(OH)2 -> SMILES)
-│   ├── cas_resolver.py         # PubChem name/CAS -> SMILES
-│   └── superatom_table.py      # Fragment vocabulary (2,854 entries)
-│
-├── render/                     # Generate CDXML from descriptions
-│   ├── renderer.py             # CDXML rendering engine (5 layouts)
-│   ├── schema.py               # Dataclass definitions
-│   ├── parser.py               # YAML parser
-│   ├── compact_parser.py       # Compact text parser
-│   ├── auto_layout.py          # Zero-effort JSON -> CDXML
-│   └── scheme_yaml_writer.py   # JSON -> YAML layout decisions
-│
-├── layout/                     # Composable layout tools
-│   ├── reaction_cleanup.py     # Pure-Python layout (6 approaches)
-│   ├── alignment.py            # Structure alignment (Kabsch, MCS)
-│   └── scheme_merger.py        # Multi-scheme merging
-│
-├── naming/                     # Agent chemistry reasoning tools
-│   ├── mol_builder.py          # Resolve names, apply reactions, deprotect
-│   ├── name_decomposer.py      # Structural decomposition
-│   └── aligned_namer.py        # Multi-step aligned naming (Viterbi DP)
-│
-├── analysis/                   # LCMS parsing, lab book generation
-│   ├── lcms_analyzer.py        # Single-file LCMS PDF parser
-│   ├── format_procedure_entry.py # Agent-driven lab book formatting
-│   ├── extract_nmr.py          # NMR data extraction
-│   └── deterministic/          # Batch pipeline (cross-file LCMS, etc.)
-│
-├── chemdraw/                   # ChemDraw COM automation (Windows)
-├── office/                     # OLE embedding in PPTX/DOCX
-├── image/                      # Image-based structure extraction (DECIMER)
-├── deterministic_pipeline/     # Legacy polishing workflows
-└── mcp_server/                 # Model Context Protocol server
-```
-
-## ChemDraw COM Warning
-
-Tools using ChemDraw COM automation (`cdx_converter`, `cdxml_to_image`, `scheme_polisher`, `ole_embedder`) launch and control ChemDraw programmatically. **Close ChemDraw before running these tools.**
-
-## ACS Document 1996 Style
-
-All CDXML output conforms to ACS Document 1996 style:
-- Bond length: 14.40 pt
-- Chain angle: 120 degrees
-- Font: Arial 10pt Bold
-- Line width: 0.6 pt
 
 ## License
 
