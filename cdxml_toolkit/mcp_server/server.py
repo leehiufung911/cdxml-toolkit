@@ -77,6 +77,67 @@ def _write_output(content, output_path: Optional[str], prefix: str, ext: str) ->
     return {"ok": True, "output_path": output_path, "size": os.path.getsize(output_path)}
 
 
+def _coerce_mol_json(mol_json):
+    """Accept a bare SMILES string in place of {"smiles": "..."}."""
+    if isinstance(mol_json, str):
+        mol_json = {"smiles": mol_json}
+    return mol_json
+
+
+def _parse_json_string(value):
+    """If *value* is a JSON-encoded string (e.g. '[{"locant":"4"}]'), parse it."""
+    if isinstance(value, str):
+        value = value.strip()
+        if value and value[0] in ("[", "{"):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                pass
+    return value
+
+
+# Known modify_molecule operations
+_KNOWN_OPERATIONS = {"analyze", "name_surgery", "smarts", "set_smiles", "set_name", "reaction"}
+
+
+def _normalize_operation(operation: str, reaction_name: Optional[str]) -> tuple:
+    """Normalize the operation string for modify_molecule.
+
+    Handles:
+      - Case/whitespace: "BOC deprotection" → look up as reaction name
+      - If *operation* isn't one of the 6 known ops but matches a reaction
+        template, redirect to operation="reaction", reaction_name=<matched>.
+    Returns (operation, reaction_name).
+    """
+    op = operation.strip()
+    # Exact match (case-insensitive)
+    op_lower = op.lower().replace(" ", "_").replace("-", "_")
+    for known in _KNOWN_OPERATIONS:
+        if op_lower == known.lower():
+            return known, reaction_name
+
+    # Not a known operation — maybe it's a reaction name?
+    # Import lazily to check reaction templates
+    if reaction_name is None:
+        try:
+            from cdxml_toolkit.naming.mol_builder import list_reactions
+            result = list_reactions()
+            rxn_list = result.get("reactions", []) if isinstance(result, dict) else []
+            template_names = [r["name"] if isinstance(r, dict) else r for r in rxn_list]
+            # Try exact (case-insensitive, normalize underscores)
+            for name in template_names:
+                if op_lower == name.lower().replace(" ", "_").replace("-", "_"):
+                    return "reaction", name
+            # Try fuzzy substring
+            for name in template_names:
+                if op_lower in name.lower() or name.lower() in op_lower:
+                    return "reaction", name
+        except Exception:
+            pass
+
+    return op, reaction_name
+
+
 def _validate_file(path: str, label: str) -> Path:
     """Resolve and validate that *path* exists and is a file."""
     p = Path(path).resolve()
@@ -195,6 +256,9 @@ def modify_molecule(
         output_name, aligned_names, diff (atoms_added, atoms_removed,
         atoms_changed, mcs_smarts, delta_formula, delta_mw), formula, mw.
     """
+    # ── Input normalization ──────────────────────────────────────
+    mol_json = _coerce_mol_json(mol_json)
+
     if not mol_json or not mol_json.get("smiles"):
         return (
             "Usage: modify_molecule(mol_json={smiles: '...'}, operation='...')\n"
@@ -206,6 +270,15 @@ def modify_molecule(
             "  set_smiles:   modify_molecule({smiles:'...'}, 'set_smiles', new_smiles='validated_smiles')\n"
             "Tip: get mol_json from resolve_name first, not hand-written SMILES."
         )
+
+    # Normalize operation name (e.g. "BOC deprotection" → reaction + BOC_deprotection)
+    operation, reaction_name = _normalize_operation(operation, reaction_name)
+
+    # Parse stringified JSON arrays (model sometimes sends "[{...}]" as a string)
+    if add is not None:
+        add = _parse_json_string(add)
+    if remove is not None:
+        remove = _parse_json_string(remove)
 
     from cdxml_toolkit.naming.mol_builder import modify_molecule as _modify
 
@@ -221,7 +294,7 @@ def modify_molecule(
     if reaction_name is not None:
         kwargs["reaction_name"] = reaction_name
     if reagent is not None:
-        kwargs["reagent"] = reagent
+        kwargs["reagent"] = _coerce_mol_json(reagent)
     if smarts is not None:
         kwargs["smarts"] = smarts
     if description is not None:
@@ -256,6 +329,9 @@ def draw_molecule(mol_json: dict, output_path: Optional[str] = None) -> dict:
         Dict with keys: ok, cdxml (CDXML document string), and output_path if
         a path was specified. Returns {ok: False, error: "..."} on failure.
     """
+    # ── Input normalization ──────────────────────────────────────
+    mol_json = _coerce_mol_json(mol_json)
+
     if not mol_json or not mol_json.get("smiles"):
         return (
             "Usage: draw_molecule(mol_json={smiles:'...'}, output_path='path.cdxml')\n"
@@ -502,7 +578,20 @@ def parse_reaction(
             raise FileNotFoundError(
                 f"File not found: {p}. Check the path exists and use forward slashes."
             )
-        kwargs["input_dir"] = str(p)
+        # Auto-discover files when only input_dir given (no explicit files)
+        if not any([cdxml, cdx, csv, rxn]):
+            for f in sorted(p.iterdir()):
+                ext = f.suffix.lower()
+                if ext == ".cdxml" and not cdxml:
+                    kwargs["cdxml"] = str(f)
+                elif ext == ".cdx" and "cdx" not in kwargs and "cdxml" not in kwargs:
+                    kwargs["cdx"] = str(f)
+                elif ext == ".csv" and "csv" not in kwargs:
+                    kwargs["csv"] = str(f)
+                elif ext == ".rxn" and "rxn" not in kwargs:
+                    kwargs["rxn"] = str(f)
+        else:
+            kwargs["input_dir"] = str(p)
 
     try:
         descriptor = _parse(**kwargs, verbose=False)
@@ -576,6 +665,11 @@ def summarize_reaction(
         )
 
     from cdxml_toolkit.perception.reaction_parser import reaction_summary
+
+    # Parse stringified JSON arrays (model sometimes sends '["name","role"]' as string)
+    species_fields = _parse_json_string(species_fields) if species_fields is not None else None
+    top_fields = _parse_json_string(top_fields) if top_fields is not None else None
+    eln_fields = _parse_json_string(eln_fields) if eln_fields is not None else None
 
     p = _validate_file(json_path, "JSON file")
     return reaction_summary(
@@ -952,9 +1046,19 @@ def format_lab_entry(
             return {"ok": False, "error": f"Invalid JSON: {e}"}
 
     if isinstance(entries_json, dict):
-        entries = entries_json.get("entries", [])
+        if "entries" in entries_json:
+            entries = entries_json["entries"]
+        elif "procedure" in entries_json or "content" in entries_json:
+            # Shorthand: {procedure: "text"} or {content: "text"} → [{type: "text", content: "..."}]
+            text = entries_json.get("procedure") or entries_json.get("content", "")
+            entries = [{"type": "text", "content": text}]
+        else:
+            entries = entries_json.get("entries", [])
     elif isinstance(entries_json, list):
         entries = entries_json
+    elif isinstance(entries_json, str) and not entries_json.strip().startswith("["):
+        # Bare text string → wrap as text entry
+        entries = [{"type": "text", "content": entries_json}]
     else:
         return {
             "ok": False,

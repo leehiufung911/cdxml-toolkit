@@ -247,9 +247,11 @@ def _normalize_scheme_data(data: Dict[str, Any]) -> Dict[str, Any]:
     import copy
     data = copy.deepcopy(data)
 
-    # 1. Accept ``species`` as alias for ``structures``
-    if "species" in data and "structures" not in data:
-        data["structures"] = data.pop("species")
+    # 1. Accept ``species`` / ``substrates`` as alias for ``structures``
+    for alias in ("species", "substrates"):
+        if alias in data and "structures" not in data:
+            data["structures"] = data.pop(alias)
+            break
 
     # 2. Accept ``structures`` as a list of dicts (convert to keyed mapping)
     raw_structs = data.get("structures")
