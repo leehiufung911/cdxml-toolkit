@@ -685,7 +685,7 @@ def summarize_reaction(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-def extract_structures_from_image(
+async def extract_structures_from_image(
     image_path: str,
     detect_labels: bool = True,
 ) -> dict:
@@ -738,7 +738,43 @@ def extract_structures_from_image(
 
     p = _validate_file(image_path, "Image file")
     try:
-        return _extract(str(p), detect_labels=detect_labels)
+        # Run DECIMER in an async subprocess to isolate TensorFlow's
+        # stdout/stderr writes from the MCP JSON-RPC stdio channel, while
+        # keeping the asyncio event loop alive for MCP ping/keepalive.
+        import asyncio
+        import sys
+
+        script = (
+            "import json, sys, os; "
+            "os.environ['TF_CPP_MIN_LOG_LEVEL']='3'; "
+            "os.environ['TF_ENABLE_ONEDNN_OPTS']='0'; "
+            "from cdxml_toolkit.image.structure_from_image import "
+            "extract_structures_from_image; "
+            f"r = extract_structures_from_image({str(p)!r}, detect_labels={detect_labels!r}); "
+            "sys.stdout.write(json.dumps(r, default=str))"
+        )
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", script,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(), timeout=600
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            return {
+                "ok": False,
+                "error": "DECIMER extraction timed out (>10 min). TensorFlow model loading is slow on first run on CPU.",
+            }
+        if proc.returncode != 0:
+            return {
+                "ok": False,
+                "error": f"DECIMER subprocess failed: {stderr.decode(errors='replace')[-500:]}",
+            }
+        return json.loads(stdout.decode())
     except Exception as e:
         return {
             "ok": False,
