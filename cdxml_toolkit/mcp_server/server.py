@@ -775,43 +775,20 @@ async def extract_structures_from_image(
 
     p = _validate_file(image_path, "Image file")
     try:
-        # Run DECIMER in an async subprocess to isolate TensorFlow's
-        # stdout/stderr writes from the MCP JSON-RPC stdio channel, while
-        # keeping the asyncio event loop alive for MCP ping/keepalive.
-        import asyncio
-        import sys
-
-        script = (
-            "import json, sys, os; "
-            "os.environ['TF_CPP_MIN_LOG_LEVEL']='3'; "
-            "os.environ['TF_ENABLE_ONEDNN_OPTS']='0'; "
-            "from cdxml_toolkit.image.structure_from_image import "
-            "extract_structures_from_image; "
-            f"r = extract_structures_from_image({str(p)!r}, detect_labels={detect_labels!r}); "
-            "sys.stdout.write(json.dumps(r, default=str))"
+        # Run in a thread pool so the synchronous TF inference doesn't
+        # block the MCP event loop (keeps keepalive pings responsive).
+        # TF's C-level logging is suppressed via TF_CPP_MIN_LOG_LEVEL=3
+        # set in main() before any TF import.
+        # If --preload-decimer was used, the model is already warm and
+        # this returns in ~2 s.  Otherwise, first call pays ~25 s cold
+        # start, subsequent calls are fast.
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            functools.partial(
+                _extract, str(p), detect_labels=detect_labels,
+            ),
         )
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-c", script,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=600
-            )
-        except asyncio.TimeoutError:
-            proc.kill()
-            return {
-                "ok": False,
-                "error": "DECIMER extraction timed out (>10 min). TensorFlow model loading is slow on first run on CPU.",
-            }
-        if proc.returncode != 0:
-            return {
-                "ok": False,
-                "error": f"DECIMER subprocess failed: {stderr.decode(errors='replace')[-500:]}",
-            }
-        return json.loads(stdout.decode())
     except Exception as e:
         return {
             "ok": False,
@@ -1521,7 +1498,22 @@ def main():
         default=8000,
         help="Port for HTTP transport (default: 8000)",
     )
+    parser.add_argument(
+        "--preload-decimer",
+        action="store_true",
+        help=(
+            "Pre-load the DECIMER model at startup (~25 s, ~800 MB RAM). "
+            "Makes extract_structures_from_image calls fast (~2 s) instead "
+            "of paying the cold-start cost on first call."
+        ),
+    )
     args = parser.parse_args()
+
+    # Suppress TensorFlow C-level logging before any TF import.
+    # This prevents TF's stdout/stderr writes from corrupting the
+    # MCP JSON-RPC stdio channel.
+    os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+    os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 
     # Pre-import RDKit and load the reagent DB before the MCP event loop
     # starts.  On some Windows/Python configurations, importing the RDKit C
@@ -1535,6 +1527,22 @@ def main():
         get_reagent_db()
     except Exception:
         pass  # graceful: server still works, just slower on first call
+
+    # Optionally pre-load the DECIMER model in a background thread so the
+    # MCP server is immediately available for other tools (resolve_name, etc.)
+    # while the ~25 s model load happens asynchronously.
+    if args.preload_decimer:
+        import threading
+
+        def _bg_load_decimer():
+            try:
+                from cdxml_toolkit.image.structure_from_image import _load_decimer
+                _load_decimer(hand_drawn=False)
+            except Exception:
+                pass  # graceful: DECIMER not installed or model download failed
+
+        t = threading.Thread(target=_bg_load_decimer, daemon=True)
+        t.start()
 
     if args.transport == "stdio":
         mcp.run(transport="stdio")
