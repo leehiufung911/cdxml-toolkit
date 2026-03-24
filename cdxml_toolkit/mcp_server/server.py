@@ -1536,11 +1536,23 @@ def main():
         import threading
 
         def _bg_load_decimer():
+            import time as _t
+            _t0 = _t.perf_counter()
             try:
                 from cdxml_toolkit.image.structure_from_image import _load_decimer
                 _load_decimer(hand_drawn=False)
-            except Exception:
-                pass  # graceful: DECIMER not installed or model download failed
+                import sys
+                print(
+                    f"[cdxml-toolkit] DECIMER preloaded in "
+                    f"{_t.perf_counter() - _t0:.1f}s",
+                    file=sys.stderr,
+                )
+            except Exception as exc:
+                import sys
+                print(
+                    f"[cdxml-toolkit] DECIMER preload skipped: {exc}",
+                    file=sys.stderr,
+                )
 
         t = threading.Thread(target=_bg_load_decimer, daemon=True)
         t.start()
