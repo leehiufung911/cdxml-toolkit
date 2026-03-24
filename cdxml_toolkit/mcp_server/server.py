@@ -29,10 +29,35 @@ import argparse
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.server.fastmcp import FastMCP
+import functools
 
+import asyncio
+import inspect
+
+def _json_safe_tool(fn):
+    """Decorator: convert dict/list returns to JSON strings for MCP compatibility.
+    Handles both sync and async functions."""
+    if inspect.iscoroutinefunction(fn):
+        @functools.wraps(fn)
+        async def async_wrapper(*args, **kwargs):
+            result = await fn(*args, **kwargs)
+            if isinstance(result, (dict, list)):
+                return json.dumps(result, indent=2, default=str)
+            return result
+        return async_wrapper
+    else:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if isinstance(result, (dict, list)):
+                return json.dumps(result, indent=2, default=str)
+            return result
+        return wrapper
+
+# Patch FastMCP.tool to auto-wrap with _json_safe_tool
 mcp = FastMCP(
     "cdxml-toolkit",
     instructions=(
@@ -44,6 +69,18 @@ mcp = FastMCP(
         "compound identifiers, not LLM-generated SMILES — always resolve names first."
     ),
 )
+
+# Patch mcp.tool to auto-wrap with JSON-safe return conversion
+_original_mcp_tool_decorator = mcp.tool
+
+def _safe_mcp_tool(*args, **kwargs):
+    """Wrap mcp.tool to ensure all tool functions return strings, not dicts."""
+    decorator = _original_mcp_tool_decorator(*args, **kwargs)
+    def wrapper(fn):
+        return decorator(_json_safe_tool(fn))
+    return wrapper
+
+mcp.tool = _safe_mcp_tool
 
 
 # ---------------------------------------------------------------------------
@@ -994,7 +1031,7 @@ def parse_analysis_file(
 
 @mcp.tool()
 def format_lab_entry(
-    entries_json: Any,
+    entries_json: Union[List[dict], dict, str],
     output_path: Optional[str] = None,
 ) -> dict:
     """Format a list of entry dicts into a structured lab book text entry.
