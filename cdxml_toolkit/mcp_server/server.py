@@ -1499,12 +1499,12 @@ def main():
         help="Port for HTTP transport (default: 8000)",
     )
     parser.add_argument(
-        "--preload-decimer",
+        "--no-preload-decimer",
         action="store_true",
         help=(
-            "Pre-load the DECIMER model at startup (~25 s, ~800 MB RAM). "
-            "Makes extract_structures_from_image calls fast (~2 s) instead "
-            "of paying the cold-start cost on first call."
+            "Skip pre-loading the DECIMER model at startup. "
+            "Saves ~25 s startup time and ~800 MB RAM, but first "
+            "extract_structures_from_image call will be slow."
         ),
     )
     args = parser.parse_args()
@@ -1528,10 +1528,11 @@ def main():
     except Exception:
         pass  # graceful: server still works, just slower on first call
 
-    # Optionally pre-load the DECIMER model in a background thread so the
-    # MCP server is immediately available for other tools (resolve_name, etc.)
-    # while the ~25 s model load happens asynchronously.
-    if args.preload_decimer:
+    # Pre-load the DECIMER model in a background thread so the MCP server
+    # is immediately available for other tools (resolve_name, etc.) while
+    # the ~25 s model load happens asynchronously.  Disable with
+    # --no-preload-decimer if DECIMER is not installed or RAM is tight.
+    if not args.no_preload_decimer:
         import threading
 
         def _bg_load_decimer():
