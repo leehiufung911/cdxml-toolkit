@@ -66,6 +66,7 @@ include = ["cdxml_toolkit*"]
 
 [tool.setuptools.package-data]
 "cdxml_toolkit.resolve" = ["*.json"]
+"cdxml_toolkit.naming" = ["*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
