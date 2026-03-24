@@ -102,24 +102,132 @@ try:
 except ImportError:
     HAS_RDKIT = False
 
-# DECIMER import is deferred to prediction time to avoid slow TF startup when
-# the tool is imported as a library without actually calling predict.
+# ---------------------------------------------------------------------------
+# DECIMER lazy loader — loads ONE model on demand, not both at import time.
+#
+# Upstream DECIMER eagerly loads both the standard AND hand-drawn models
+# (~332 MB each) at import time via module-level get_models().  This takes
+# ~50 s on CPU.  We bypass that by loading only the model we need, only
+# when predict is first called, cutting cold-start roughly in half.
+# ---------------------------------------------------------------------------
 _decimer_predict = None
+_decimer_mode = None  # tracks which model is loaded: "standard" or "hand_drawn"
 
 
 def _load_decimer(hand_drawn: bool = False):
-    """Lazy-load DECIMER predict_SMILES to defer TensorFlow startup."""
-    global _decimer_predict
-    if _decimer_predict is None:
-        try:
-            from DECIMER import predict_SMILES
-            _decimer_predict = predict_SMILES
-        except ImportError as exc:
-            raise ImportError(
-                "DECIMER is not installed. Run:\n"
-                "  pip install DECIMER\n"
-                f"Original error: {exc}"
-            ) from exc
+    """Lazy-load DECIMER, loading only the requested model (not both).
+
+    On first call, loads TensorFlow + one DECIMER SavedModel (~25 s instead
+    of ~50 s).  Subsequent calls with the same ``hand_drawn`` flag return
+    instantly.  If the flag changes, the other model is loaded on demand.
+    """
+    global _decimer_predict, _decimer_mode
+    requested = "hand_drawn" if hand_drawn else "standard"
+
+    if _decimer_predict is not None and _decimer_mode == requested:
+        return _decimer_predict
+
+    try:
+        import tensorflow as tf
+        import pystow
+    except ImportError as exc:
+        raise ImportError(
+            "DECIMER is not installed. Run:\n"
+            "  pip install cdxml-toolkit[decimer]\n"
+            f"Original error: {exc}"
+        ) from exc
+
+    # Bypass DECIMER's __init__.py which eagerly loads BOTH models (~50 s).
+    # Instead, load only the two helper submodules we need (utils, pre_process)
+    # via importlib, then call tf.saved_model.load for just ONE model.
+    import importlib.util, sys, types, pickle
+
+    spec = importlib.util.find_spec("DECIMER")
+    if spec is None or spec.submodule_search_locations is None:
+        raise ImportError("DECIMER package not found")
+    pkg_dir = spec.submodule_search_locations[0]
+
+    # Register a stub DECIMER package so submodule imports resolve
+    if "DECIMER" not in sys.modules:
+        stub = types.ModuleType("DECIMER")
+        stub.__path__ = [pkg_dir]
+        stub.__package__ = "DECIMER"
+        sys.modules["DECIMER"] = stub
+
+    def _load_submodule(name):
+        fqn = f"DECIMER.{name}"
+        if fqn in sys.modules:
+            return sys.modules[fqn]
+        sub_spec = importlib.util.spec_from_file_location(
+            fqn, os.path.join(pkg_dir, f"{name}.py"),
+        )
+        mod = importlib.util.module_from_spec(sub_spec)
+        sys.modules[fqn] = mod
+        sub_spec.loader.exec_module(mod)
+        return mod
+
+    utils = _load_submodule("utils")
+    pre_process = _load_submodule("pre_process")
+
+    # Locate models on disk (downloads ~570 MB on first run)
+    default_path = pystow.join("DECIMER-V2")
+    model_urls = {
+        "DECIMER": "https://zenodo.org/record/8300489/files/models.zip",
+        "DECIMER_HandDrawn": "https://zenodo.org/records/10781330/files/DECIMER_HandDrawn_model.zip",
+    }
+    model_paths = utils.ensure_models(default_path=default_path, model_urls=model_urls)
+
+    # Load tokenizer (fast, ~0 s)
+    tokenizer_path = os.path.join(
+        model_paths["DECIMER"], "assets", "tokenizer_SMILES.pkl"
+    )
+    try:
+        with open(tokenizer_path, "rb") as f:
+            tokenizer = pickle.load(f)
+    except ModuleNotFoundError:
+        # Keras 2→3 compat: redirect keras.preprocessing.text
+        class _K2Unpickler(pickle.Unpickler):
+            def find_class(self, module, name):
+                if module.startswith("keras."):
+                    module = module.replace("keras.", "tensorflow.keras.", 1)
+                return super().find_class(module, name)
+        with open(tokenizer_path, "rb") as f:
+            tokenizer = _K2Unpickler(f).load()
+
+    # Load only the requested model (~25 s instead of ~50 s for both)
+    model_key = "DECIMER_HandDrawn" if hand_drawn else "DECIMER"
+    model = tf.saved_model.load(model_paths[model_key])
+
+    def _predict(image_input, confidence=False, hand_drawn=False):
+        """Predict SMILES from an image (numpy array or file path)."""
+        chemical_structure = pre_process.decode_image(image_input)
+        predicted_tokens, confidence_values = model(
+            tf.constant(chemical_structure)
+        )
+        outputs = [tokenizer.index_word[i] for i in predicted_tokens[0].numpy()]
+        smiles = (
+            "".join(str(t) for t in outputs)
+            .replace("<start>", "")
+            .replace("<end>", "")
+        )
+        smiles = utils.decoder(smiles)
+
+        if confidence:
+            conf_pairs = [
+                (
+                    utils.decoder(tokenizer.index_word[predicted_tokens[0].numpy()[i]]),
+                    confidence_values[i].numpy(),
+                )
+                for i in range(len(confidence_values))
+            ]
+            # strip <start>/<end> tokens
+            conf_pairs = conf_pairs[1:-1]
+            return smiles, conf_pairs
+
+        return smiles
+
+    _decimer_predict = _predict
+    _decimer_mode = requested
     return _decimer_predict
 
 
