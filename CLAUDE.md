@@ -252,11 +252,11 @@ render_to_png(cdxml_path="scheme.cdxml")  # requires ChemDraw COM
 ## Installation
 
 ```bash
-pip install -e ".[all]"        # Everything
-pip install -e ".[rdkit]"      # Core + RDKit (minimum for rendering)
+pip install "cdxml-toolkit[all] @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
+pip install -e ".[dev]"        # Development (editable)
 ```
 
-**Required:** `lxml>=4.6`. **Recommended:** `rdkit>=2023.03`.
+Extras: `[all]` (recommended), `[all,decimer]` (with image extraction), `[full]` (everything), `[dev]` (testing).
 
 ## Package structure
 

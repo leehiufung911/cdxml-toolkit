@@ -106,26 +106,19 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 
 **Progressive discovery.** Call any tool with no arguments to get usage examples and schema reference.
 
-## Tested across model tiers
-
-| Model | Score | Notes |
-|-------|:-----:|-------|
-| Sonnet 4.6 (MCP) | 10/10 | Zero patches needed, 444k tokens |
-| Haiku 4.5 (MCP) | 10/10 | Most token-efficient |
-| Qwen 3.5 27B (MCP) | 9/10 | Via opencode + OpenRouter |
-| Qwen 3.5 9B (qwen-agent) | 4/10 | Requires qwen-agent framework for multi-turn |
-| Ministral 8B (MCP) | 3/3 | 3-task benchmark; runs on a laptop |
-
 ## Installation
 
+**Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) and ChemScript installed.
+
 ```bash
-# Core + RDKit (recommended minimum)
-pip install -e ".[rdkit]"
+# From GitHub — recommended install (includes RDKit, MCP server, ChemDraw COM,
+# Office support, PDF parsing, image processing, and ChemScript bridge)
+pip install "cdxml-toolkit[all] @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
 
-# Everything (RDKit + ChemDraw COM + PDF parsing + Office + MCP)
-pip install -e ".[all]"
+# With DECIMER neural image extraction (extract_structures_from_image)
+pip install "cdxml-toolkit[all,decimer] @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
 
-# Development
+# Development (editable install)
 git clone https://github.com/leehiufung911/cdxml-toolkit.git
 cd cdxml-toolkit
 pip install -e ".[dev]"
@@ -133,14 +126,24 @@ pip install -e ".[dev]"
 
 **Required:** `lxml>=4.6`. **Recommended:** `rdkit>=2023.03` (needed for scheme rendering).
 
-| Optional | What it enables | Install extra |
-|----------|----------------|---------------|
-| RDKit | SMILES, 2D coords, MW, structure alignment | `[rdkit]` |
-| pywin32 | ChemDraw COM automation (Windows) | `[chemdraw]` |
-| python-pptx, python-docx, olefile | Office document support | `[office]` |
-| DECIMER, opencv-python | Image structure extraction | `[image]` |
-| pdfplumber | LCMS/NMR PDF parsing | `[analysis]` |
-| mcp | MCP server | `[mcp]` |
+### Extras
+
+| Extra | What it includes | Notes |
+|-------|-----------------|-------|
+| `[all]` | RDKit, pywin32, image, Office, YAML, PDF analysis, MCP server, pythonnet | **Use this.** Everything most users need. |
+| `[decimer]` | TensorFlow, DECIMER, PyMuPDF | Neural image-to-SMILES. Adds ~1 GB. |
+| `[full]` | `[all]` + `[decimer]` + `[ocr]` | Everything pip-installable. |
+| `[rdkit]` | RDKit only | Minimal install for scripting. |
+| `[mcp]` | MCP server + PyYAML | MCP server only (no RDKit/Office). |
+| `[dev]` | `[all]` + pytest | For running the test suite. |
+
+### System dependencies (not pip-installable)
+
+| Dependency | Required for | Setup |
+|-----------|-------------|-------|
+| **ChemDraw** (ChemOffice 2015+) | CDX conversion, PNG rendering | Assumed installed. Must be **closed** before running. |
+| **ChemScript .NET** | Name resolution (Tier 3: IUPAC to structure) | Comes with ChemOffice. Needs a 32-bit Python env (`chemscript32`) with pythonnet and a `~/.chemscript_config.json`. |
+| **Microsoft Office** | OLE embedding into PPTX/DOCX | Optional. Only needed for `embed_cdxml_in_office`. |
 
 ## CLI tools
 
