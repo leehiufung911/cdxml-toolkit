@@ -1523,6 +1523,19 @@ def main():
     )
     args = parser.parse_args()
 
+    # Pre-import RDKit and load the reagent DB before the MCP event loop
+    # starts.  On some Windows/Python configurations, importing the RDKit C
+    # extension from inside the async event loop's thread causes a hang
+    # (the DLL load never completes once anyio has wrapped stdout/stderr).
+    # Doing it here -- before mcp.run() -- avoids the issue entirely and
+    # also eliminates the 1-2 s first-call delay for resolve_name.
+    try:
+        from rdkit import Chem  # noqa: F401
+        from cdxml_toolkit.resolve.reagent_db import get_reagent_db
+        get_reagent_db()
+    except Exception:
+        pass  # graceful: server still works, just slower on first call
+
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
