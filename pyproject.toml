@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
@@ -28,6 +29,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Core chemistry extras
 rdkit = ["rdkit>=2023.03"]
 chemdraw = ["pywin32>=300"]
 image = ["opencv-python>=4.5", "Pillow>=9.0"]
@@ -35,7 +37,19 @@ office = ["python-pptx>=0.6", "python-docx>=0.8", "olefile>=0.46"]
 yaml = ["pyyaml>=5.4"]
 mcp = ["mcp>=1.0", "pyyaml>=5.4"]
 analysis = ["pdfplumber>=0.7"]
-all = ["cdxml-toolkit[rdkit,chemdraw,office,yaml,analysis]"]
+
+# Lazy-loaded runtime deps (previously undeclared)
+chemscript = ["pythonnet>=3.0"]
+decimer = [
+    "decimer>=2.6",
+    "decimer-segmentation>=1.4",
+    "pymupdf>=1.20",
+]
+ocr = ["pytesseract>=0.3"]
+
+# Composite extras
+all = ["cdxml-toolkit[rdkit,chemdraw,image,office,yaml,analysis,mcp,chemscript]"]
+full = ["cdxml-toolkit[all,decimer,ocr]"]
 dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
 
 [project.urls]
