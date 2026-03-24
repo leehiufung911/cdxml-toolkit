@@ -40,9 +40,13 @@ analysis = ["pdfplumber>=0.7"]
 
 # Lazy-loaded runtime deps (previously undeclared)
 chemscript = ["pythonnet>=3.0"]
+# DECIMER image extraction — neural OCR for chemical structures.
+# Only DECIMER (the image→SMILES transformer) is needed; cdxml-toolkit
+# has its own segmentation logic and does NOT use decimer-segmentation.
+# pymupdf is needed to render PDF pages to images before passing to DECIMER.
 decimer = [
+    "tensorflow>=2.16",
     "decimer>=2.6",
-    "decimer-segmentation>=1.4",
     "pymupdf>=1.20",
 ]
 ocr = ["pytesseract>=0.3"]
