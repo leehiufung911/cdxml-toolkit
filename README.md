@@ -60,7 +60,7 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 ### Chemistry resolution
 | Tool | Description |
 |------|-------------|
-| `resolve_name` | Name/abbreviation/CAS/formula to rich molecule JSON (4-tier: reagent DB, condensed formula, ChemScript, PubChem) |
+| `resolve_name` | Name/abbreviation/CAS/formula to rich molecule JSON (5-tier: reagent DB, condensed formula, ChemScript, OPSIN, PubChem) |
 | `modify_molecule` | 6 operations: analyze, name_surgery, smarts, set_smiles, set_name, reaction. 162 named reaction templates. Returns MCS-based structural diffs. |
 
 ### Structure rendering
@@ -130,20 +130,59 @@ pip install -e ".[dev]"
 
 | Extra | What it includes | Notes |
 |-------|-----------------|-------|
-| `[all]` | RDKit, pywin32, image, Office, YAML, PDF analysis, MCP server, pythonnet | **Use this.** Everything most users need. |
+| `[all]` | RDKit, pywin32, image, Office, YAML, PDF analysis, MCP server, pythonnet, py2opsin | **Use this.** Everything most users need. |
 | `[decimer]` | TensorFlow, DECIMER, PyMuPDF | Neural image-to-SMILES. Adds ~1 GB. |
 | `[full]` | `[all]` + `[decimer]` + `[ocr]` | Everything pip-installable. |
 | `[rdkit]` | RDKit only | Minimal install for scripting. |
 | `[mcp]` | MCP server + PyYAML | MCP server only (no RDKit/Office). |
 | `[dev]` | `[all]` + pytest | For running the test suite. |
 
+### Name resolution tiers
+
+`resolve_name` tries 5 tiers in order. The first tier to return a valid SMILES wins:
+
+| Tier | Source | Deps | Coverage |
+|------|--------|------|----------|
+| 1 | Curated reagent DB (186 entries) | None | Common reagents, catalysts, solvents |
+| 2 | Condensed formula parser | RDKit | Shorthand like PhB(OH)2, Et3N, CF3 |
+| 3 | **ChemScript** (preferred) | ChemDraw + 32-bit Python | Full IUPAC names, any drawable structure |
+| 4 | **OPSIN** (bundled fallback) | py2opsin + bundled JRE | Systematic IUPAC names, offline |
+| 5 | PubChem | Network | CAS numbers, trade names, everything else |
+
+ChemScript (Tier 3) is preferred because it handles the widest range of names and integrates with ChemDraw's structure engine. OPSIN (Tier 4) is a fully offline fallback that works out of the box — a JRE is bundled with the package, no Java install needed. If neither is available, PubChem provides a network-based last resort.
+
 ### System dependencies (not pip-installable)
 
 | Dependency | Required for | Setup |
 |-----------|-------------|-------|
-| **ChemDraw** (ChemOffice 2015+) | CDX conversion, PNG rendering | Assumed installed. Must be **closed** before running. |
-| **ChemScript .NET** | Name resolution (Tier 3: IUPAC to structure) | Comes with ChemOffice. Needs a 32-bit Python env (`chemscript32`) with pythonnet and a `~/.chemscript_config.json`. |
+| **ChemDraw** (ChemOffice 2015+) | CDX conversion, PNG rendering | Must be **closed** before running COM tools. |
+| **ChemScript .NET** | Name resolution Tier 3 (preferred, not required) | Comes with ChemOffice. See setup below. |
 | **Microsoft Office** | OLE embedding into PPTX/DOCX | Optional. Only needed for `embed_cdxml_in_office`. |
+
+### ChemScript setup (optional but recommended)
+
+ChemScript gives the best IUPAC name resolution but requires a 32-bit Python environment because the ChemScript .NET DLL is 32-bit. If you skip this, OPSIN handles IUPAC names as a fallback.
+
+```bash
+# 1. Create 32-bit Python env
+set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 -y
+
+# 2. Install pythonnet in the 32-bit env
+C:\Users\%USERNAME%\miniconda3\envs\chemscript32\python.exe -m pip install pythonnet
+
+# 3. Auto-detect ChemDraw and save config
+cdxml-convert --configure
+```
+
+Step 3 scans for ChemDraw (2015/2016/PerkinElmer paths) and writes `~/.chemscript_config.json`. If your ChemDraw is in a non-standard location, edit the config manually:
+
+```json
+{
+  "python32": "C:\\Users\\YOU\\miniconda3\\envs\\chemscript32\\python.exe",
+  "dll_dir": "C:\\Program Files (x86)\\PerkinElmerInformatics\\ChemOffice2016\\ChemScript\\Lib\\Net",
+  "assembly": "CambridgeSoft.ChemScript16"
+}
+```
 
 ## CLI tools
 

@@ -52,7 +52,8 @@ decimer = [
 ocr = ["pytesseract>=0.3"]
 
 # Composite extras
-all = ["cdxml-toolkit[rdkit,chemdraw,image,office,yaml,analysis,mcp,chemscript]"]
+opsin = ["py2opsin>=1.0"]
+all = ["cdxml-toolkit[rdkit,chemdraw,image,office,yaml,analysis,mcp,chemscript,opsin]"]
 full = ["cdxml-toolkit[all,decimer,ocr]"]
 dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
 
@@ -85,6 +86,7 @@ include = ["cdxml_toolkit*"]
 [tool.setuptools.package-data]
 "cdxml_toolkit.resolve" = ["*.json"]
 "cdxml_toolkit.naming" = ["*.json"]
+"cdxml_toolkit._jre" = ["*.zip"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

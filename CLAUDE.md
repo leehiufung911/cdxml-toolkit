@@ -34,7 +34,7 @@ resolve_name(query="CF3")            # fragment → prefix form
 
 Returns: `{ok, name, smiles, formula, mw, exact_mass, iupac_name, source, role, display_text, prefix_form}`
 
-4-tier chain: curated reagent DB (186 entries) → condensed formula parser → ChemScript IUPAC → PubChem.
+5-tier chain: curated reagent DB (186 entries) → condensed formula parser → ChemScript IUPAC (preferred) → OPSIN (bundled offline fallback) → PubChem.
 
 ### modify_molecule
 

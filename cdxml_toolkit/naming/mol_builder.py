@@ -251,6 +251,22 @@ def _resolve_query(query: str, use_network: bool = True) -> Optional[Dict]:
         except Exception:
             pass
 
+    # Tier 3b: OPSIN (offline IUPAC name → SMILES, bundled JRE)
+    try:
+        from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
+        if ensure_java_on_path():
+            import warnings
+            from py2opsin import py2opsin as _py2opsin
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                smi = _py2opsin(clean)
+            if smi and Chem.MolFromSmiles(smi):
+                return {"smiles": _rdkit_canonical(smi), "source": "opsin"}
+    except (ImportError, FileNotFoundError):
+        pass
+    except Exception:
+        pass
+
     # Tier 4: PubChem (online)
     if use_network:
         try:

@@ -296,8 +296,8 @@ def _opsin_name_to_smiles(name: str) -> Optional[str]:
     (e.g. "cesium carbonate", "triethylamine", "sodium tert-butoxide").
     Fails on abbreviations (BINAP, Pd2dba3) and some organometallics.
 
-    Requires Java (JRE 8+) and the py2opsin package.  Java is
-    auto-discovered via PATH, JAVA_HOME, or known bundled locations.
+    Requires the py2opsin package.  A JRE is auto-downloaded on first
+    use if no system Java is found (via :mod:`cdxml_toolkit.resolve.jre_manager`).
     """
     global _opsin_available, _java_exe
     if _opsin_available is False:
@@ -307,15 +307,17 @@ def _opsin_name_to_smiles(name: str) -> Optional[str]:
         from py2opsin import py2opsin
 
         # Ensure Java is discoverable by py2opsin's subprocess call.
-        if _java_exe is None:
-            _java_exe = _find_java()
-        if _java_exe and _java_exe not in os.environ.get("PATH", ""):
-            # Add the JRE bin directory to PATH so py2opsin's
-            # subprocess.run(["java", ...]) can find it.
-            java_bin_dir = os.path.dirname(_java_exe)
-            os.environ["PATH"] = java_bin_dir + os.pathsep + os.environ.get("PATH", "")
-            java_home = os.path.dirname(java_bin_dir)
-            os.environ["JAVA_HOME"] = java_home
+        # Uses the centralized JRE manager which auto-downloads if needed.
+        from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
+        if not ensure_java_on_path():
+            # Fall back to legacy _find_java for non-standard locations
+            if _java_exe is None:
+                _java_exe = _find_java()
+            if _java_exe and _java_exe not in os.environ.get("PATH", ""):
+                java_bin_dir = os.path.dirname(_java_exe)
+                os.environ["PATH"] = java_bin_dir + os.pathsep + os.environ.get("PATH", "")
+                java_home = os.path.dirname(java_bin_dir)
+                os.environ["JAVA_HOME"] = java_home
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
@@ -326,7 +328,6 @@ def _opsin_name_to_smiles(name: str) -> Optional[str]:
         _opsin_available = True
         return None
     except FileNotFoundError:
-        # Java not found even after discovery attempt
         if _opsin_available is None:
             print("  [info] OPSIN unavailable (Java not found)", file=sys.stderr)
         _opsin_available = False
