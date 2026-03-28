@@ -12,7 +12,7 @@ Tools:
     convert_cdx_cdxml     — Bidirectional CDX ↔ CDXML file conversion
     parse_analysis_file   — LCMS/NMR PDF → peaks and data
     format_lab_entry      — Entry dicts → formatted lab book text
-    extract_cdxml_from_office — PPTX/DOCX → embedded CDXML files
+    extract_cdxml_from_office — PPTX/DOCX/XLS/XLSX → embedded CDXML files
     embed_cdxml_in_office — CDXML → editable OLE object in PPTX/DOCX
     search_compound       — SMILES → exact/similar matches across experiments
     render_to_png         — CDXML → PNG via ChemDraw COM
@@ -1140,16 +1140,17 @@ def extract_cdxml_from_office(
     file_path: str,
     output_dir: Optional[str] = None,
 ) -> dict:
-    """Extract embedded ChemDraw objects from a PPTX or DOCX file.
+    """Extract embedded ChemDraw objects from a PPTX, DOCX, XLS, or XLSX file.
 
-    Office files (PPTX/DOCX) are ZIP archives that may contain ChemDraw OLE
-    objects as binary blobs. This tool extracts every ChemDraw object, converts
-    it to CDXML, and writes the files to output_dir.
+    Office files (PPTX/DOCX/XLSX) are ZIP archives that may contain ChemDraw OLE
+    objects as binary blobs. XLS files are OLE2 compound documents with embedded
+    ChemDraw objects stored in MBD* sub-storages. This tool extracts every
+    ChemDraw object, converts it to CDXML, and writes the files to output_dir.
 
     Requires: olefile. CDX→CDXML conversion uses available backends.
 
     Args:
-        file_path:  Path to a .pptx or .docx file.
+        file_path:  Path to a .pptx, .docx, .xlsx, or .xls file.
         output_dir: Directory for extracted CDXML files. Default: a folder
                     named "<basename>_chemdraw/" next to the input file.
 
@@ -1161,10 +1162,12 @@ def extract_cdxml_from_office(
     if not file_path or not file_path.strip():
         return (
             "Usage: extract_cdxml_from_office(file_path='document.pptx', output_dir='out/')\n"
-            "Extracts embedded ChemDraw objects from PPTX or DOCX files.\n"
+            "Extracts embedded ChemDraw objects from PPTX, DOCX, XLS, or XLSX files.\n"
             "Examples:\n"
             "  extract_cdxml_from_office(file_path='presentation.pptx')\n"
             "  extract_cdxml_from_office(file_path='report.docx', output_dir='extracted/')\n"
+            "  extract_cdxml_from_office(file_path='labbook.xls')\n"
+            "  extract_cdxml_from_office(file_path='labbook.xlsx')\n"
             "Returns: {ok, count, objects:[{cdxml_output, source_path}]}"
         )
 
@@ -1183,8 +1186,9 @@ def extract_cdxml_from_office(
             "ok": False,
             "error": (
                 f"Extraction failed: {e}. "
-                "Ensure the file is a valid .pptx or .docx and that olefile is installed "
-                "(pip install olefile). The file must contain embedded ChemDraw OLE objects."
+                "Ensure the file is a valid .pptx, .docx, .xlsx, or .xls and that olefile "
+                "is installed (pip install olefile). The file must contain embedded "
+                "ChemDraw OLE objects."
             ),
             "input": str(p),
         }
