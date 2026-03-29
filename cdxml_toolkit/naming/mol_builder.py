@@ -255,11 +255,12 @@ def _resolve_query(query: str, use_network: bool = True) -> Optional[Dict]:
     try:
         from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
         if ensure_java_on_path():
-            import warnings
+            import warnings, tempfile, os
             from py2opsin import py2opsin as _py2opsin
+            tmp = os.path.join(tempfile.gettempdir(), "py2opsin_temp_input.txt")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
-                smi = _py2opsin(clean)
+                smi = _py2opsin(clean, tmp_fpath=tmp)
             if smi and Chem.MolFromSmiles(smi):
                 return {"smiles": _rdkit_canonical(smi), "source": "opsin"}
     except (ImportError, FileNotFoundError):
@@ -339,7 +340,11 @@ def _prefix_alpha_key(prefix: str) -> str:
 
 
 def _try_validate(name: str, use_network: bool = True) -> Optional[str]:
-    """Try to resolve a name to canonical SMILES by any available means.
+    """Try to resolve a name to canonical SMILES via offline resolvers.
+
+    Uses ChemScript then OPSIN.  Never hits the network — the
+    *use_network* parameter is accepted for call-site compatibility
+    but ignored.
 
     Returns canonical SMILES or None.
     """
@@ -354,25 +359,18 @@ def _try_validate(name: str, use_network: bool = True) -> Optional[str]:
     try:
         from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
         if ensure_java_on_path():
-            import warnings
+            import warnings, tempfile, os
             from py2opsin import py2opsin as _py2opsin
+            tmp = os.path.join(tempfile.gettempdir(), "py2opsin_temp_input.txt")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
-                smi = _py2opsin(name)
+                smi = _py2opsin(name, tmp_fpath=tmp)
             if smi and Chem.MolFromSmiles(smi):
                 return _rdkit_canonical(smi)
     except (ImportError, FileNotFoundError):
         pass
-
-    # PubChem fallback (for common names)
-    if use_network:
-        try:
-            from cdxml_toolkit.resolve.cas_resolver import resolve_name_to_smiles
-            smi = resolve_name_to_smiles(name)
-            if smi:
-                return _rdkit_canonical(smi)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     return None
 
