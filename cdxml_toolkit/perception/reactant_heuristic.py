@@ -163,25 +163,39 @@ def _get_chemscript():
 
 
 def _fragment_to_smiles(frag: ET.Element) -> Optional[str]:
-    """Convert a CDXML <fragment> to SMILES via ChemScript."""
+    """Convert a CDXML <fragment> to SMILES via ChemScript or RDKit."""
+    # Try ChemScript first (handles abbreviation groups better)
     cs = _get_chemscript()
-    if cs is None:
-        return None
-    cdxml_str = _fragment_to_cdxml(frag)
-    tmp_path = None
+    if cs is not None:
+        cdxml_str = _fragment_to_cdxml(frag)
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".cdxml", mode="w",
+                                              delete=False, encoding="utf-8") as f:
+                f.write(cdxml_str)
+                tmp_path = f.name
+            smiles = cs.write_data(tmp_path, "smiles")
+            if smiles and smiles.strip():
+                return smiles.strip()
+        except Exception as e:
+            print(f"  [warn] ChemScript fragment→SMILES failed: {e}",
+                  file=sys.stderr)
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    # RDKit fallback
     try:
-        with tempfile.NamedTemporaryFile(suffix=".cdxml", mode="w",
-                                          delete=False, encoding="utf-8") as f:
-            f.write(cdxml_str)
-            tmp_path = f.name
-        smiles = cs.write_data(tmp_path, "smiles")
-        return smiles.strip() if smiles else None
+        from ..rdkit_utils import frag_to_mol
+        from rdkit import Chem
+        mol, _ = frag_to_mol(frag)
+        if mol is not None:
+            return Chem.MolToSmiles(mol)
     except Exception as e:
-        print(f"  [warn] fragment→SMILES failed: {e}", file=sys.stderr)
-        return None
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        print(f"  [warn] RDKit fragment→SMILES failed: {e}",
+              file=sys.stderr)
+
+    return None
 
 
 def _text_to_smiles(text_content: str) -> Optional[str]:

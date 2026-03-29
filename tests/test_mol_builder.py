@@ -57,6 +57,22 @@ needs_chemscript = pytest.mark.skipif(
 )
 
 
+def _chemscript_available():
+    """Return True only if ChemScript is available (needed for SMILES→name)."""
+    try:
+        from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
+        ChemScriptBridge()
+        return True
+    except Exception:
+        return False
+
+
+needs_chemscript_bidirectional = pytest.mark.skipif(
+    not _chemscript_available(),
+    reason="ChemScript required (SMILES-to-name not available via OPSIN)",
+)
+
+
 # ---------------------------------------------------------------------------
 # Unit tests (no external dependencies)
 # ---------------------------------------------------------------------------
@@ -472,10 +488,10 @@ class TestEndToEnd:
 
 
 # ---------------------------------------------------------------------------
-# enumerate_names tests (require ChemScript for decompose_name)
+# enumerate_names tests (require ChemScript for SMILES→name decomposition)
 # ---------------------------------------------------------------------------
 
-@needs_chemscript
+@needs_chemscript_bidirectional
 class TestEnumerateNames:
     """enumerate_names — alternative IUPAC name forms."""
 
@@ -531,7 +547,7 @@ class TestEnumerateNames:
             assert n["valid"] is True
 
 
-@needs_chemscript
+@needs_chemscript_bidirectional
 class TestEnumerateNamesThenSwap:
     """End-to-end: enumerate_names → find prefix → modify_name."""
 

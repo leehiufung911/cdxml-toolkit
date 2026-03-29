@@ -16,6 +16,24 @@ from cdxml_toolkit.perception.scheme_reader import (
 
 
 # ---------------------------------------------------------------------------
+# Skip marker: ChemScript-only (SMILES→name, aligned naming)
+# ---------------------------------------------------------------------------
+
+def _chemscript_available():
+    try:
+        from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
+        ChemScriptBridge()
+        return True
+    except Exception:
+        return False
+
+needs_chemscript = pytest.mark.skipif(
+    not _chemscript_available(),
+    reason="ChemScript required (SMILES-to-name not available via OPSIN)",
+)
+
+
+# ---------------------------------------------------------------------------
 # Test data paths
 # ---------------------------------------------------------------------------
 
@@ -382,6 +400,7 @@ class TestNarrative:
                            use_network=False)
         assert "divergent" in desc.narrative
 
+    @needs_chemscript
     def test_narrative_contains_aligned_names(self):
         desc = read_scheme(_showcase("01_buchwald_linear.cdxml"),
                            use_network=False)
@@ -419,6 +438,7 @@ class TestNarrative:
 class TestAlignedNaming:
     """Tests for aligned IUPAC name enrichment."""
 
+    @needs_chemscript
     def test_aligned_iupac_populated(self):
         desc = read_scheme(_showcase("01_buchwald_linear.cdxml"),
                            use_network=False)
@@ -433,6 +453,7 @@ class TestAlignedNaming:
         assert desc.steps[0].molecular_diff_text is not None
         assert len(desc.steps[0].molecular_diff_text) > 0
 
+    @needs_chemscript
     def test_aligned_names_in_json(self):
         desc = read_scheme(_showcase("01_buchwald_linear.cdxml"),
                            use_network=False)
@@ -667,6 +688,7 @@ class TestSegmentedReadScheme:
 # Name decomposer — recursive decomposition
 # ---------------------------------------------------------------------------
 
+@needs_chemscript
 class TestNameDecomposerRecursion:
     """Test recursive sub-fragment decomposition in decompose_name."""
 

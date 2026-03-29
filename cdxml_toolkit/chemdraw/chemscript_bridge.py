@@ -164,6 +164,7 @@ class ChemScriptBridge:
     """
 
     def __init__(self, python32_path: str = None):
+        self._proc: Optional[subprocess.Popen] = None
         cfg = _load_config()
         self._python32 = python32_path or cfg.get("python32") or _find_python32()
         if self._python32 is None:
@@ -181,7 +182,6 @@ class ChemScriptBridge:
         self._server_script = str(
             Path(__file__).resolve().parent / "_chemscript_server.py"
         )
-        self._proc: Optional[subprocess.Popen] = None
 
     def _ensure_server(self):
         """Start the server subprocess if not already running."""
