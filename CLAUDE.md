@@ -8,8 +8,8 @@ A chemistry office automation toolkit with 15 MCP tools. Agents use these tools 
 
 ## Key rules
 
-1. **Never generate SMILES.** Always call `resolve_name` first. LLM-generated SMILES are unreliable.
-2. **Never edit SMILES directly.** Always use `modify_molecule` to transform molecules — it gives you an MCS diff to verify correctness. Never construct `{"smiles": "..."}` with hand-edited SMILES and pass it to `draw_molecule`.
+1. **Molecules are tool outputs, not strings you write.** Every molecule you work with must come from a tool: `resolve_name`, `modify_molecule`, `parse_reaction`, `extract_structures_from_image`, etc. Never write a SMILES yourself — not from built-in chemistry knowledge, not from reading an image with vision, not by editing a SMILES string. If you need a molecule, call a tool to get it.
+2. **Never edit SMILES directly.** To transform a molecule, use `modify_molecule` — it gives you an MCS diff to verify correctness. If you must provide a hand-edited SMILES (e.g. for a structural change no operation covers), use `modify_molecule(operation="set_smiles")` so the diff confirms what changed. Never construct `{"smiles": "..."}` yourself and pass it to `draw_molecule` or `render_scheme`.
 3. **Never return large output inline.** Tools write files and return `{ok, output_path, size}`. Use `summarize_reaction` to view `parse_reaction` output — do not read the full JSON.
 4. **CDXML is the interchange format.** Binary CDX files must be converted via `convert_cdx_cdxml`.
 

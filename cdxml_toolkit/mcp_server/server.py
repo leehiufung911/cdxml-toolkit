@@ -423,6 +423,12 @@ def render_scheme(
                   (substrates, products, above/below arrow).
     - json_path:  Path to reaction JSON from parse_reaction (auto-layout).
 
+    IMPORTANT: Every SMILES in the YAML must come from a tool — resolve_name,
+    modify_molecule, parse_reaction, extract_structures_from_image, etc.
+    Never write SMILES from built-in chemistry knowledge or from reading an
+    image with vision. Always call the appropriate tool first, then use the
+    SMILES from its output in your YAML.
+
     Convention: ONE substrate on center line per step.  Additional reagents
     go in above_arrow (structures or text).  This shares intermediates
     between sequential steps.
