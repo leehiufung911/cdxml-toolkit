@@ -111,12 +111,11 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 **Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) and ChemScript installed.
 
 ```bash
-# From GitHub — recommended install (includes RDKit, MCP server, ChemDraw COM,
-# Office support, PDF parsing, image processing, and ChemScript bridge)
-pip install "cdxml-toolkit[all] @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
+# From PyPI (recommended)
+pip install cdxml-toolkit
 
-# With DECIMER neural image extraction (extract_structures_from_image)
-pip install "cdxml-toolkit[all,decimer] @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
+# From GitHub (latest development version)
+pip install "cdxml-toolkit @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
 
 # Development (editable install)
 git clone https://github.com/leehiufung911/cdxml-toolkit.git
@@ -124,18 +123,7 @@ cd cdxml-toolkit
 pip install -e ".[dev]"
 ```
 
-**Required:** `lxml>=4.6`. **Recommended:** `rdkit>=2023.03` (needed for scheme rendering).
-
-### Extras
-
-| Extra | What it includes | Notes |
-|-------|-----------------|-------|
-| `[all]` | RDKit, pywin32, image, Office, YAML, PDF analysis, MCP server, pythonnet, py2opsin | **Use this.** Everything most users need. |
-| `[decimer]` | TensorFlow, DECIMER, PyMuPDF | Neural image-to-SMILES. Adds ~1 GB. |
-| `[full]` | `[all]` + `[decimer]` + `[ocr]` | Everything pip-installable. |
-| `[rdkit]` | RDKit only | Minimal install for scripting. |
-| `[mcp]` | MCP server + PyYAML | MCP server only (no RDKit/Office). |
-| `[dev]` | `[all]` + pytest | For running the test suite. |
+Everything is included by default: RDKit, MCP server, ChemDraw COM, Office support, PDF analysis, image processing, ChemScript bridge, DECIMER neural image extraction, OPSIN, and OCR.
 
 ### Name resolution tiers
 

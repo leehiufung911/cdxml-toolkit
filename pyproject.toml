@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cdxml-toolkit"
-version = "0.5.1"
+version = "0.5.2"
 description = "MCP server and Python toolkit for perception, rendering, and analysis of molecules and reaction schemes in ChemDraw CDXML."
 readme = "README.md"
 license = "MIT"
@@ -26,36 +26,27 @@ classifiers = [
 ]
 dependencies = [
     "lxml>=4.6",
-]
-
-[project.optional-dependencies]
-# Core chemistry extras
-rdkit = ["rdkit>=2023.03"]
-chemdraw = ["pywin32>=300"]
-image = ["opencv-python>=4.5", "Pillow>=9.0"]
-office = ["python-pptx>=0.6", "python-docx>=0.8", "olefile>=0.46"]
-yaml = ["pyyaml>=5.4"]
-mcp = ["mcp>=1.0", "pyyaml>=5.4"]
-analysis = ["pdfplumber>=0.7"]
-
-# Lazy-loaded runtime deps (previously undeclared)
-chemscript = ["pythonnet>=3.0"]
-# DECIMER image extraction — neural OCR for chemical structures.
-# Only DECIMER (the image→SMILES transformer) is needed; cdxml-toolkit
-# has its own segmentation logic and does NOT use decimer-segmentation.
-# pymupdf is needed to render PDF pages to images before passing to DECIMER.
-decimer = [
+    "rdkit>=2023.03",
+    "pywin32>=300",
+    "opencv-python>=4.5",
+    "Pillow>=9.0",
+    "python-pptx>=0.6",
+    "python-docx>=0.8",
+    "olefile>=0.46",
+    "pyyaml>=5.4",
+    "mcp>=1.0",
+    "pdfplumber>=0.7",
+    "pythonnet>=3.0",
     "tensorflow>=2.16",
     "decimer>=2.6",
     "pymupdf>=1.20",
+    "pytesseract>=0.3",
+    "py2opsin>=1.0",
+    "pytest>=7.0",
 ]
-ocr = ["pytesseract>=0.3"]
 
-# Composite extras
-opsin = ["py2opsin>=1.0"]
-all = ["cdxml-toolkit[rdkit,chemdraw,image,office,yaml,analysis,mcp,chemscript,opsin]"]
-full = ["cdxml-toolkit[all,decimer,ocr]"]
-dev = ["cdxml-toolkit[all]", "pytest>=7.0"]
+[project.optional-dependencies]
+dev = ["cdxml-toolkit", "pytest>=7.0"]
 
 [project.urls]
 Homepage = "https://github.com/leehiufung911/cdxml-toolkit"
