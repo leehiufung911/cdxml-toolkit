@@ -22,6 +22,8 @@ cdxml-doctor --no-tests
 
 Everything is included by default: RDKit, MCP server, ChemDraw COM, Office support, PDF analysis, image processing, DECIMER neural image extraction, OPSIN, and OCR.
 
+On first run, `cdxml-doctor` will extract the bundled JRE for OPSIN (~45 MB, one-time) and download DECIMER neural models (~570 MB). Subsequent runs are fast.
+
 If ChemScript is not configured, `cdxml-doctor` will detect your ChemDraw installation and print the exact setup commands. For example, with a 32-bit ChemOffice install:
 
 ```

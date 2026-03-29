@@ -67,6 +67,14 @@ def _print_diagnostics():
     print(f"  Package:      {pkg_ver}")
     print()
 
+    # Ensure bundled JRE is extracted before checking OPSIN
+    # (py2opsin checks for java at import time)
+    try:
+        from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
+        ensure_java_on_path(download=False)
+    except Exception:
+        pass
+
     # Dependencies
     checks = [
         ("RDKit", lambda: __import__("rdkit.Chem", fromlist=["Chem"])),
