@@ -250,12 +250,14 @@ def modify_molecule(
 ) -> dict:
     """Analyze or transform a molecule with structural verification.
 
-    Takes a molecule dict (at minimum {"smiles": "..."}) and applies one of 6
-    operations. Returns the modified molecule with a structural diff so you can
-    verify the change was correct. This is the primary molecular editing tool.
+    IMPORTANT: This is the ONLY correct way to modify a molecule. Never edit
+    SMILES strings yourself and pass them directly to draw_molecule — always
+    go through modify_molecule so you get an MCS-based structural diff to
+    verify the change was correct.
 
-    Do NOT set new_smiles to a hallucinated SMILES — only use "set_smiles" if
-    you have a validated SMILES from resolve_name or apply_reaction output.
+    Takes a molecule dict (at minimum {"smiles": "..."}) and applies one of 6
+    operations. Returns the modified molecule with a structural diff showing
+    exactly what atoms/bonds were added, removed, or changed.
 
     Operations:
         "analyze"      — Inspect without modifying: functional groups, IUPAC
@@ -264,10 +266,12 @@ def modify_molecule(
                          Pass add=[{"locant": "2", "prefix": "fluoro"}] and/or
                          remove=["methyl"] kwargs.
         "smarts"       — Apply a SMARTS reaction transform. Pass smarts=
-                         "reaction SMARTS" (e.g. "[c:1][F]>>[c:1][Cl]") or
+                         "reaction SMILES" (e.g. "[c:1][F]>>[c:1][Cl]") or
                          reaction_name= from list_reactions output.
-        "set_smiles"   — Accept a validated SMILES. Pass new_smiles= (validated
-                         by RDKit) and optional description= for context.
+        "set_smiles"   — Use when you have edited a SMILES and want to verify
+                         the change. Pass the original mol_json and new_smiles=.
+                         The MCS diff will confirm exactly what was added/removed.
+                         Do NOT generate SMILES from scratch — use resolve_name.
         "set_name"     — Set the display name. Pass new_name=.
         "reaction"     — Apply a named template from list_reactions. Pass
                          reaction_name= and optionally reagent={"smiles": ...}
@@ -353,13 +357,16 @@ def draw_molecule(mol_json: dict, output_path: Optional[str] = None) -> dict:
     (BondLength=14.40, Arial 10pt). Optionally places a text label below the
     structure using the "label", "name", or "iupac_name" field (in that order).
 
-    Useful for quick structure visualisation before adding to a scheme, or for
-    generating a CDXML snippet to open directly in ChemDraw.
+    IMPORTANT: Do NOT construct {"smiles": "..."} with hand-edited SMILES.
+    Always get mol_json from another tool (resolve_name, modify_molecule,
+    parse_reaction, etc.). If you need to edit a SMILES, use
+    modify_molecule(operation="set_smiles") first — it gives you an MCS diff
+    to verify the edit was correct before drawing.
 
     Args:
         mol_json: Molecule dict with at least {"smiles": "..."}. Optional display
                   fields: "label" (used verbatim), "name", "iupac_name".
-                  Typically the output of resolve_name or modify_molecule.
+                  Should come from another tool's output, not hand-constructed.
         output_path: If given, also write CDXML to this file path.
 
     Returns:
@@ -643,7 +650,13 @@ def parse_reaction(
             ),
         }
 
-    return _write_output(result, output_path, "reaction", ".json")
+    out = _write_output(result, output_path, "reaction", ".json")
+    if isinstance(out, dict) and out.get("ok"):
+        out["hint"] = (
+            "Use summarize_reaction(json_path=...) to view this result. "
+            "Do NOT read the full JSON file — it is large and wastes context."
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------

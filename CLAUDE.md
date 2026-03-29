@@ -9,8 +9,9 @@ A chemistry office automation toolkit with 15 MCP tools. Agents use these tools 
 ## Key rules
 
 1. **Never generate SMILES.** Always call `resolve_name` first. LLM-generated SMILES are unreliable.
-2. **Never return large output inline.** Tools write files and return `{ok, output_path, size}`.
-3. **CDXML is the interchange format.** Binary CDX files must be converted via `convert_cdx_cdxml`.
+2. **Never edit SMILES directly.** Always use `modify_molecule` to transform molecules — it gives you an MCS diff to verify correctness. Never construct `{"smiles": "..."}` with hand-edited SMILES and pass it to `draw_molecule`.
+3. **Never return large output inline.** Tools write files and return `{ok, output_path, size}`. Use `summarize_reaction` to view `parse_reaction` output — do not read the full JSON.
+4. **CDXML is the interchange format.** Binary CDX files must be converted via `convert_cdx_cdxml`.
 
 ## MCP server
 
