@@ -59,11 +59,11 @@ Alternatively, install from GitHub for the latest development version:
 pip install "cdxml-toolkit @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
 ```
 
-## MCP server
+## MCP server (Claude Desktop)
 
-The primary interface is the MCP server. Connect it to any MCP-compatible agent (Claude Desktop, Claude Code, opencode, qwen-agent, etc.) and chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
+The primary interface is the MCP server. Connect it to Claude Desktop and chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
 
-Edit your MCP config to point to the Python in your conda environment (replace `YOUR_USERNAME`):
+Open the config file at `%APPDATA%\Claude\claude_desktop_config.json` and replace its contents with the following (change `YOUR_USERNAME` to your Windows username):
 
 ```json
 {
@@ -76,15 +76,15 @@ Edit your MCP config to point to the Python in your conda environment (replace `
 }
 ```
 
-For Claude Desktop, this file is at `%APPDATA%\Claude\claude_desktop_config.json`.
-
-### Verify it works
+Restart Claude Desktop. Verify by asking:
 
 ```
 > Resolve "aspirin", then draw it.
 ```
 
 Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML file.
+
+The same config pattern works with other MCP-compatible agents (Claude Code, opencode, qwen-agent, etc.).
 
 ## MCP tools (15)
 
