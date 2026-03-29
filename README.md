@@ -6,51 +6,69 @@ The goal: any chemist with a consumer GPU can run a local LLM agent that helps w
 
 > Built and tested with Claude Code (Opus 4.6). I directed the design and architecture; Claude did the implementation. I'm a PhD organic chemist, not a programmer — this project wouldn't exist without Claude Code, and I thank Anthropic. 
 
-## Quick start: MCP server
+## Installation
 
-The primary interface is the MCP server. Connect it to any MCP-compatible agent (Claude Desktop, opencode, qwen-agent, etc.) and just chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
+**Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) installed. Python 3.10–3.13 (3.14 is not yet supported by TensorFlow/DECIMER).
 
-### Claude Desktop
+```bash
+# 1. Create a conda environment and install
+conda create -n cdxml python=3.12 pip -y
+conda activate cdxml
+pip install cdxml-toolkit
 
-Edit `%APPDATA%\Claude\claude_desktop_config.json` (Windows) or `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac):
+# 2. Run the doctor to check your setup
+cdxml-doctor --no-tests
+```
+
+Everything is included by default: RDKit, MCP server, ChemDraw COM, Office support, PDF analysis, image processing, DECIMER neural image extraction, OPSIN, and OCR.
+
+If ChemScript is not configured, `cdxml-doctor` will detect your ChemDraw installation and print the exact setup commands. For example, with a 32-bit ChemOffice install:
+
+```
+=== ChemScript setup ===
+Found ChemScript DLLs:
+  Managed:  C:\...\CambridgeSoft.ChemScript16.dll (32-bit)
+  Native:   C:\...\ChemScript160.dll (32-bit)
+
+To enable ChemScript (32-bit DLLs detected):
+  set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y
+  C:\Users\YOU\miniconda3\envs\chemscript32\python.exe -m pip install pythonnet
+  cdxml-convert --configure
+```
+
+Follow those instructions, then run `cdxml-doctor --no-tests` again to confirm everything is working.
+
+ChemScript is optional — without it, OPSIN handles IUPAC name resolution as an offline fallback. ChemScript adds bidirectional name-to-structure conversion and aligned naming.
+
+Alternatively, install from GitHub for the latest development version:
+
+```bash
+pip install "cdxml-toolkit @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
+```
+
+## MCP server
+
+The primary interface is the MCP server. Connect it to any MCP-compatible agent (Claude Desktop, Claude Code, opencode, qwen-agent, etc.) and chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
+
+Edit your MCP config to point to the Python in your conda environment (replace `YOUR_USERNAME`):
 
 ```json
 {
   "mcpServers": {
     "cdxml-toolkit": {
-      "command": "python",
+      "command": "C:\\Users\\YOUR_USERNAME\\miniconda3\\envs\\cdxml\\python.exe",
       "args": ["-m", "cdxml_toolkit.mcp_server"]
     }
   }
 }
 ```
 
-### opencode (for OpenRouter / local models)
-
-Create `opencode.json`:
-
-```json
-{
-  "provider": {
-    "openrouter": {
-      "models": { "qwen/qwen3.5-27b": {} }
-    }
-  },
-  "mcp": {
-    "cdxml-toolkit": {
-      "type": "local",
-      "command": ["python", "-m", "cdxml_toolkit.mcp_server"],
-      "enabled": true,
-      "timeout": 120000
-    }
-  }
-}
-```
+For Claude Desktop, this file is at `%APPDATA%\Claude\claude_desktop_config.json`.
 
 ### Verify it works
 
 ```
-> Use cdxml-toolkit. Resolve "aspirin", then draw it.
+> Resolve "aspirin", then draw it.
 ```
 
 Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML file.
@@ -106,76 +124,6 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 
 **Progressive discovery.** Call any tool with no arguments to get usage examples and schema reference.
 
-## Installation
-
-**Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) and ChemScript installed. Python 3.10–3.13 (3.14 is not yet supported by TensorFlow/DECIMER).
-
-```bash
-# Create a conda environment with a supported Python version
-conda create -n cdxml python=3.12 pip -y
-conda activate cdxml
-
-# From PyPI (recommended)
-pip install cdxml-toolkit
-
-# From GitHub (latest development version)
-pip install "cdxml-toolkit @ git+https://github.com/leehiufung911/cdxml-toolkit.git@main"
-
-# Development (editable install)
-git clone https://github.com/leehiufung911/cdxml-toolkit.git
-cd cdxml-toolkit
-pip install -e ".[dev]"
-```
-
-Everything is included by default: RDKit, MCP server, ChemDraw COM, Office support, PDF analysis, image processing, ChemScript bridge, DECIMER neural image extraction, OPSIN, and OCR.
-
-### Name resolution tiers
-
-`resolve_name` tries 5 tiers in order. The first tier to return a valid SMILES wins:
-
-| Tier | Source | Deps | Coverage |
-|------|--------|------|----------|
-| 1 | Curated reagent DB (186 entries) | None | Common reagents, catalysts, solvents |
-| 2 | Condensed formula parser | RDKit | Shorthand like PhB(OH)2, Et3N, CF3 |
-| 3 | **ChemScript** (preferred) | ChemDraw + 32-bit Python | Full IUPAC names, any drawable structure |
-| 4 | **OPSIN** (bundled fallback) | py2opsin + bundled JRE | Systematic IUPAC names, offline |
-| 5 | PubChem | Network | CAS numbers, trade names, everything else |
-
-ChemScript (Tier 3) is preferred because it handles the widest range of names and integrates with ChemDraw's structure engine. OPSIN (Tier 4) is a fully offline fallback that works out of the box — a JRE is bundled with the package, no Java install needed. If neither is available, PubChem provides a network-based last resort.
-
-### System dependencies (not pip-installable)
-
-| Dependency | Required for | Setup |
-|-----------|-------------|-------|
-| **ChemDraw** (ChemOffice 2015+) | CDX conversion, PNG rendering | Must be **closed** before running COM tools. |
-| **ChemScript .NET** | Name resolution Tier 3 (preferred, not required) | Comes with ChemOffice. See setup below. |
-| **Microsoft Office** | OLE embedding into PPTX/DOCX | Optional. Only needed for `embed_cdxml_in_office`. |
-
-### ChemScript setup (optional but recommended)
-
-ChemScript gives the best IUPAC name resolution but requires a 32-bit Python environment because the ChemScript .NET DLL is 32-bit. If you skip this, OPSIN handles IUPAC names as a fallback.
-
-```bash
-# 1. Create 32-bit Python env
-set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 -y
-
-# 2. Install pythonnet in the 32-bit env
-C:\Users\%USERNAME%\miniconda3\envs\chemscript32\python.exe -m pip install pythonnet
-
-# 3. Auto-detect ChemDraw and save config
-cdxml-convert --configure
-```
-
-Step 3 scans for ChemDraw (2015/2016/PerkinElmer paths) and writes `~/.chemscript_config.json`. If your ChemDraw is in a non-standard location, edit the config manually:
-
-```json
-{
-  "python32": "C:\\Users\\YOU\\miniconda3\\envs\\chemscript32\\python.exe",
-  "dll_dir": "C:\\Program Files (x86)\\PerkinElmerInformatics\\ChemOffice2016\\ChemScript\\Lib\\Net",
-  "assembly": "CambridgeSoft.ChemScript16"
-}
-```
-
 ## CLI tools
 
 All tools are also available as command-line scripts:
@@ -194,6 +142,7 @@ All tools are also available as command-line scripts:
 | `cdxml-nmr` | Extract NMR data from MestReNova PDFs |
 | `cdxml-format-entry` | Format lab book entries |
 | `cdxml-discover` | Discover experiment files in a directory |
+| `cdxml-doctor` | Diagnostics, test runner, and ChemScript setup guide |
 
 ## Scheme DSL
 
@@ -232,7 +181,10 @@ cdxml-render --from-json reaction.json -o scheme.cdxml
 ## Running tests
 
 ```bash
-pip install -e ".[dev]"
+# Using cdxml-doctor (recommended — also prints diagnostics)
+cdxml-doctor
+
+# Or directly with pytest
 pytest tests/ -v
 ```
 
