@@ -108,9 +108,13 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 
 ## Installation
 
-**Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) and ChemScript installed.
+**Prerequisites:** Windows with ChemDraw (ChemOffice 2015+) and ChemScript installed. Python 3.10–3.13 (3.14 is not yet supported by TensorFlow/DECIMER).
 
 ```bash
+# Create a conda environment with a supported Python version
+conda create -n cdxml python=3.12 pip -y
+conda activate cdxml
+
 # From PyPI (recommended)
 pip install cdxml-toolkit
 
