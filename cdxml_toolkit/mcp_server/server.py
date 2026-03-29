@@ -96,12 +96,15 @@ def _write_output(content, output_path: Optional[str], prefix: str, ext: str) ->
 
     Always writes to a file — the agent never receives large inline content.
     If output_path is None, generates a temp path under _TEMP_DIR.
+    Relative paths are resolved under _TEMP_DIR to avoid CWD permission errors.
     """
+    os.makedirs(_TEMP_DIR, exist_ok=True)
     if output_path is None:
-        os.makedirs(_TEMP_DIR, exist_ok=True)
         import hashlib, time
         tag = hashlib.md5(str(time.time()).encode()).hexdigest()[:8]
         output_path = os.path.join(_TEMP_DIR, f"{prefix}_{tag}{ext}")
+    elif not os.path.isabs(output_path):
+        output_path = os.path.join(_TEMP_DIR, output_path)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     if isinstance(content, str):
