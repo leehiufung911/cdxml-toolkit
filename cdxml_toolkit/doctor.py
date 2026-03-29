@@ -7,6 +7,7 @@ ChemScript setup instructions when needed.
 """
 
 import os
+import subprocess
 import sys
 
 
@@ -105,11 +106,11 @@ def _print_diagnostics():
     return cs_ok
 
 
-def _print_chemscript_setup():
-    """Print ChemScript setup instructions based on detected DLLs."""
+def _setup_chemscript():
+    """Detect ChemScript DLLs and interactively set up the environment."""
     from cdxml_toolkit.chemdraw.chemscript_bridge import (
         _find_chemdraw_root, _find_chemscript_dlls,
-        _find_python_for_chemscript, CONFIG_PATH,
+        _find_python_for_chemscript, _load_config, _save_config,
     )
 
     print("=== ChemScript setup ===\n")
@@ -123,7 +124,6 @@ def _print_chemscript_setup():
     if not dll_info:
         print("  ChemScript DLLs not found.")
         print("  ChemDraw with ChemScript must be installed.")
-        print("  If installed, run: cdxml-convert --configure")
         return
 
     bitness = dll_info.get("bitness")
@@ -132,26 +132,103 @@ def _print_chemscript_setup():
     print(f"    Native:   {dll_info['native_path']} ({bitness}-bit)")
     print()
 
-    # Check if suitable Python exists
+    # Check if a suitable Python already exists
     py = _find_python_for_chemscript(bitness)
     if py:
         print(f"  Python for ChemScript: {py}")
-        print(f"  Run: cdxml-convert --configure")
-    elif bitness == 32:
-        user = os.environ.get("USERNAME", "YOU")
-        print("  To enable ChemScript (32-bit DLLs detected):\n")
-        print("    set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y")
-        print(f"    C:\\Users\\{user}\\miniconda3\\envs\\chemscript32\\python.exe -m pip install pythonnet")
-        print("    cdxml-convert --configure")
-    elif bitness == 64:
-        print("  To enable ChemScript (64-bit DLLs detected):\n")
-        print("    pip install pythonnet")
-        print("    cdxml-convert --configure")
+        print("  Saving config...")
+        cfg = _load_config()
+        cfg["python32"] = py
+        cfg["dll_dir"] = dll_info["dll_dir"]
+        cfg["assembly"] = dll_info["assembly"]
+        cfg["bitness"] = bitness
+        _save_config(cfg)
+        print("  ChemScript configured. Run cdxml-doctor again to verify.")
         print()
-        print("  (64-bit ChemScript can use your current Python interpreter)")
-    else:
-        print("  Could not determine DLL bitness.")
-        print("  Run: cdxml-convert --configure")
+        return
+
+    # Need to create a Python env
+    if bitness == 64:
+        # 64-bit: current interpreter works, just need pythonnet
+        print("  64-bit ChemScript detected. Installing pythonnet...")
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "pythonnet"],
+            capture_output=True, text=True,
+        )
+        if r.returncode != 0:
+            print(f"  Failed to install pythonnet: {r.stderr}")
+            return
+        print("  pythonnet installed. Saving config...")
+        cfg = _load_config()
+        cfg["python32"] = sys.executable
+        cfg["dll_dir"] = dll_info["dll_dir"]
+        cfg["assembly"] = dll_info["assembly"]
+        cfg["bitness"] = bitness
+        _save_config(cfg)
+        print("  ChemScript configured. Run cdxml-doctor again to verify.")
+        print()
+        return
+
+    if bitness != 32:
+        print("  Could not determine DLL bitness. Cannot auto-configure.")
+        return
+
+    # 32-bit: need a 32-bit conda env
+    user = os.environ.get("USERNAME", "YOU")
+    py32_path = os.path.join(
+        os.path.expanduser("~"), "miniconda3", "envs",
+        "chemscript32", "python.exe",
+    )
+
+    print("  32-bit ChemScript requires a 32-bit Python environment.")
+    print("  The doctor will run the following commands:\n")
+    print("    set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y")
+    print(f"    {py32_path} -m pip install pythonnet")
+    print()
+
+    try:
+        answer = input("  Proceed? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print("\n  Skipped.")
+        return
+
+    if answer not in ("y", "yes"):
+        print("  Skipped.")
+        return
+
+    # Step 1: create 32-bit conda env
+    print("\n  Creating chemscript32 conda env...")
+    env = os.environ.copy()
+    env["CONDA_SUBDIR"] = "win-32"
+    r = subprocess.run(
+        ["conda", "create", "-n", "chemscript32", "python=3.10", "pip", "-y"],
+        env=env, capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print(f"  Failed to create conda env:\n{r.stderr}")
+        return
+    print("  chemscript32 env created.")
+
+    # Step 2: install pythonnet
+    print("  Installing pythonnet in chemscript32...")
+    r = subprocess.run(
+        [py32_path, "-m", "pip", "install", "pythonnet"],
+        capture_output=True, text=True,
+    )
+    if r.returncode != 0:
+        print(f"  Failed to install pythonnet:\n{r.stderr}")
+        return
+    print("  pythonnet installed.")
+
+    # Step 3: save config
+    print("  Saving config...")
+    cfg = _load_config()
+    cfg["python32"] = py32_path
+    cfg["dll_dir"] = dll_info["dll_dir"]
+    cfg["assembly"] = dll_info["assembly"]
+    cfg["bitness"] = bitness
+    _save_config(cfg)
+    print("  ChemScript configured. Run cdxml-doctor again to verify.")
     print()
 
 
@@ -204,7 +281,7 @@ def main(argv=None):
         exit_code = 0
 
     if not cs_ok:
-        _print_chemscript_setup()
+        _setup_chemscript()
 
     return exit_code
 

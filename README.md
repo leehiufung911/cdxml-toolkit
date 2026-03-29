@@ -24,21 +24,32 @@ Everything is included by default: RDKit, MCP server, ChemDraw COM, Office suppo
 
 On first run, `cdxml-doctor` will extract the bundled JRE for OPSIN (~45 MB, one-time) and download DECIMER neural models (~570 MB). Subsequent runs are fast.
 
-If ChemScript is not configured, `cdxml-doctor` will detect your ChemDraw installation and print the exact setup commands. For example, with a 32-bit ChemOffice install:
+If ChemScript is not configured, `cdxml-doctor` will detect your ChemDraw installation, show what it found, and offer to set everything up automatically:
 
 ```
 === ChemScript setup ===
-Found ChemScript DLLs:
-  Managed:  C:\...\CambridgeSoft.ChemScript16.dll (32-bit)
-  Native:   C:\...\ChemScript160.dll (32-bit)
 
-To enable ChemScript (32-bit DLLs detected):
-  set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y
-  C:\Users\YOU\miniconda3\envs\chemscript32\python.exe -m pip install pythonnet
-  cdxml-convert --configure
+  Found ChemScript DLLs:
+    Managed:  C:\...\CambridgeSoft.ChemScript16.dll (32-bit)
+    Native:   C:\...\ChemScript160.dll (32-bit)
+
+  32-bit ChemScript requires a 32-bit Python environment.
+  The doctor will run the following commands:
+
+    set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y
+    C:\Users\YOU\miniconda3\envs\chemscript32\python.exe -m pip install pythonnet
+
+  Proceed? [y/N] y
+
+  Creating chemscript32 conda env...
+  chemscript32 env created.
+  Installing pythonnet in chemscript32...
+  pythonnet installed.
+  Saving config...
+  ChemScript configured. Run cdxml-doctor again to verify.
 ```
 
-Follow those instructions, then run `cdxml-doctor --no-tests` again to confirm everything is working.
+Run `cdxml-doctor --no-tests` again to confirm ChemScript shows OK.
 
 ChemScript is optional — without it, OPSIN handles IUPAC name resolution as an offline fallback. ChemScript adds bidirectional name-to-structure conversion and aligned naming.
 
