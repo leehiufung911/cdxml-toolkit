@@ -99,6 +99,16 @@ Expected: 2 tool calls (resolve_name, draw_molecule), produces an aspirin CDXML 
 
 The same config pattern works with other MCP-compatible agents (Claude Code, opencode, qwen-agent, etc.).
 
+### Agent instructions file
+
+Copy `CLAUDE.md` from the repository root into your agent's working directory. This file contains critical rules that prevent the agent from hallucinating chemistry:
+
+- **Never write SMILES from built-in knowledge or vision.** Every molecule must come from a tool (`resolve_name`, `modify_molecule`, `extract_structures_from_image`, etc.).
+- **Never use vision to identify molecular structures.** Image reading can recognize that "this is a reaction scheme" but cannot reliably determine exact atom connectivity. Always use `extract_structures_from_image` for that — it runs DECIMER neural network OCR and returns validated SMILES.
+- **Never edit SMILES directly.** Use `modify_molecule` which provides an MCS diff to verify the change.
+
+For Claude Code, name it `CLAUDE.md`. For other agents, use `agents.md` or whatever your framework reads as system instructions.
+
 ## MCP tools (15)
 
 ### Chemistry resolution
