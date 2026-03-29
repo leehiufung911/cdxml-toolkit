@@ -63,7 +63,17 @@ pip install "cdxml-toolkit @ git+https://github.com/leehiufung911/cdxml-toolkit.
 
 The primary interface is the MCP server. Connect it to Claude Desktop and chat naturally: "Draw deucravacitinib", "Help me complete my lab book", "Extract structures from this image".
 
-Open the config file at `%APPDATA%\Claude\claude_desktop_config.json` and replace its contents with the following (change `YOUR_USERNAME` to your Windows username):
+Open `%APPDATA%\Claude\claude_desktop_config.json`. It will look something like this:
+
+```json
+{
+  "preferences": {
+    ...
+  }
+}
+```
+
+Add an `"mcpServers"` key at the top level, next to `"preferences"` (change `YOUR_USERNAME` to your Windows username):
 
 ```json
 {
@@ -72,6 +82,9 @@ Open the config file at `%APPDATA%\Claude\claude_desktop_config.json` and replac
       "command": "C:\\Users\\YOUR_USERNAME\\miniconda3\\envs\\cdxml\\python.exe",
       "args": ["-m", "cdxml_toolkit.mcp_server"]
     }
+  },
+  "preferences": {
+    ...
   }
 }
 ```
