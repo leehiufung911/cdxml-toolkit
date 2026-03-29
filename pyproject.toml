@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cdxml-toolkit"
-version = "0.5.5"
+version = "0.5.6"
 description = "MCP server and Python toolkit for perception, rendering, and analysis of molecules and reaction schemes in ChemDraw CDXML."
 readme = "README.md"
 license = "MIT"
@@ -69,6 +69,7 @@ cdxml-procedure = "cdxml_toolkit.analysis.deterministic.procedure_writer:main"
 cdxml-discover = "cdxml_toolkit.analysis.deterministic.discover_experiment_files:main"
 cdxml-format-entry = "cdxml_toolkit.analysis.format_procedure_entry:main"
 cdxml-nmr = "cdxml_toolkit.analysis.extract_nmr:main"
+cdxml-doctor = "cdxml_toolkit.doctor:main"
 
 [tool.setuptools.packages.find]
 include = ["cdxml_toolkit*"]

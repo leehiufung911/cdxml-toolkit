@@ -32,6 +32,7 @@ import argparse
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 import textwrap
@@ -54,8 +55,139 @@ DEFAULT_PYTHON32 = None  # auto-detected
 ACS_STYLE_ATTRS = ACS_STYLE
 
 
-def _find_python32() -> Optional[str]:
-    """Locate the 32-bit Python interpreter for the chemscript32 conda env."""
+def _dll_bitness(path: str) -> Optional[int]:
+    """Read PE header to determine 32 or 64 bit. Returns 32, 64, or None."""
+    try:
+        with open(path, "rb") as f:
+            if f.read(2) != b"MZ":
+                return None
+            f.seek(0x3C)
+            pe_offset = struct.unpack("<I", f.read(4))[0]
+            f.seek(pe_offset)
+            if f.read(4) != b"PE\x00\x00":
+                return None
+            machine = struct.unpack("<H", f.read(2))[0]
+            return {0x14C: 32, 0x8664: 64}.get(machine)
+    except (OSError, struct.error):
+        return None
+
+
+def _find_chemdraw_root() -> Optional[str]:
+    """Find ChemDraw/ChemOffice vendor install root via COM registry.
+
+    Looks up the ChemDraw.Application ProgID → CLSID → LocalServer32 path,
+    then walks up the directory tree to the vendor folder (child of
+    Program Files or Program Files (x86)).
+
+    Returns the vendor root (e.g. ``C:\\Program Files (x86)\\PerkinElmerInformatics``)
+    or None if ChemDraw is not registered.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return None
+
+    # Step 1: ProgID → CLSID
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT,
+                             "ChemDraw.Application\\CLSID")
+        clsid = winreg.QueryValue(key, "")
+        winreg.CloseKey(key)
+    except OSError:
+        return None
+
+    # Step 2: CLSID → executable path (try 32-bit and 64-bit registry views)
+    exe_path = None
+    subkey = f"SOFTWARE\\Classes\\CLSID\\{clsid}\\LocalServer32"
+    for access in [winreg.KEY_READ | winreg.KEY_WOW64_32KEY,
+                   winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+                   winreg.KEY_READ]:
+        try:
+            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, subkey, 0, access)
+            raw = winreg.QueryValue(key, "")
+            winreg.CloseKey(key)
+            # Strip /Automation flags and quotes
+            exe_path = raw.split("/")[0].strip().strip('"')
+            break
+        except OSError:
+            continue
+
+    if not exe_path or not os.path.isfile(exe_path):
+        return None
+
+    # Step 3: walk up to the vendor root (child of Program Files)
+    path = os.path.dirname(exe_path)
+    program_files = {p.lower() for p in ["program files", "program files (x86)"]}
+    while path:
+        parent = os.path.dirname(path)
+        if os.path.basename(parent).lower() in program_files:
+            return path
+        if parent == path:
+            break
+        path = parent
+    return None
+
+
+def _find_chemscript_dlls(root: str) -> Optional[Dict[str, str]]:
+    """Search a directory tree for ChemScript DLLs.
+
+    Expects to find two DLLs with 'chemscript' in the filename:
+    the smaller one is the managed .NET assembly (API surface), the larger
+    one is the native C++ engine.
+
+    Returns dict with keys ``dll_dir``, ``assembly``, ``native_path``,
+    ``bitness`` or None if not found.
+    """
+    dlls = []
+    for dirpath, _dirs, files in os.walk(root):
+        for f in files:
+            if "chemscript" in f.lower() and f.lower().endswith(".dll"):
+                full = os.path.join(dirpath, f)
+                try:
+                    size = os.path.getsize(full)
+                except OSError:
+                    continue
+                dlls.append((full, size))
+
+    if len(dlls) < 2:
+        return None
+
+    # Sort by size: smallest = managed assembly, largest = native engine
+    dlls.sort(key=lambda x: x[1])
+    managed_path = dlls[0][0]
+    native_path = dlls[-1][0]
+
+    # Derive assembly name from managed DLL filename (strip .dll extension)
+    assembly = os.path.splitext(os.path.basename(managed_path))[0]
+    dll_dir = os.path.dirname(managed_path)
+    bitness = _dll_bitness(native_path)
+
+    return {
+        "dll_dir": dll_dir,
+        "assembly": assembly,
+        "native_path": native_path,
+        "managed_path": managed_path,
+        "bitness": bitness,
+    }
+
+
+def _find_python_for_chemscript(bitness: Optional[int] = None) -> Optional[str]:
+    """Locate a Python interpreter suitable for ChemScript.
+
+    Checks saved config first, then scans for conda envs named
+    ``chemscript32`` (for 32-bit DLLs) or ``chemscript`` / current
+    interpreter (for 64-bit DLLs).
+    """
+    cfg = _load_config()
+    saved = cfg.get("python32")
+    if saved and os.path.isfile(saved):
+        return saved
+
+    # For 64-bit DLLs, the current interpreter may work
+    if bitness == 64:
+        return sys.executable
+
+    # Scan for chemscript32 conda env (32-bit DLLs)
     candidates = [
         Path.home() / "miniconda3" / "envs" / "chemscript32" / "python.exe",
         Path(os.environ.get("CONDA_PREFIX", "")) / ".." / "chemscript32" / "python.exe",
@@ -63,9 +195,12 @@ def _find_python32() -> Optional[str]:
         Path(os.environ.get("USERPROFILE", "")) / "Anaconda3" / "envs" / "chemscript32" / "python.exe",
     ]
     for p in candidates:
-        resolved = p.resolve()
-        if resolved.exists():
-            return str(resolved)
+        try:
+            resolved = p.resolve()
+            if resolved.exists():
+                return str(resolved)
+        except OSError:
+            continue
     return None
 
 
@@ -166,13 +301,15 @@ class ChemScriptBridge:
     def __init__(self, python32_path: str = None):
         self._proc: Optional[subprocess.Popen] = None
         cfg = _load_config()
-        self._python32 = python32_path or cfg.get("python32") or _find_python32()
+        bitness = cfg.get("bitness")
+        self._python32 = (python32_path
+                          or cfg.get("python32")
+                          or _find_python_for_chemscript(bitness))
         if self._python32 is None:
             raise RuntimeError(
-                "Could not find 32-bit Python (chemscript32 conda env).\n"
-                "Create it with: CONDA_SUBDIR=win-32 conda create -n chemscript32 python=3.10\n"
-                "Then install pythonnet: chemscript32/python.exe -m pip install pythonnet\n"
-                "Or specify the path: ChemScriptBridge(python32_path=r'C:\\...\\python.exe')"
+                "Could not find Python for ChemScript.\n"
+                "Run 'cdxml-doctor' for setup instructions,\n"
+                "or specify the path: ChemScriptBridge(python32_path=r'C:\\...\\python.exe')"
             )
         # Save for next time
         if cfg.get("python32") != self._python32:
@@ -610,68 +747,53 @@ class ChemScriptBridge:
 
 
 def _cli_configure(args) -> int:
-    """Auto-detect ChemDraw version and save config."""
+    """Auto-detect ChemDraw/ChemScript and save config."""
     cfg = _load_config()
+    dll_info = None
 
-    # Detect python32 path
-    py32 = cfg.get("python32") or _find_python32()
-    if py32:
-        cfg["python32"] = py32
-        print(f"  32-bit Python: {py32}")
-    else:
-        print("  WARNING: 32-bit Python (chemscript32 env) not found.")
-        print("  Create it with: set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10")
-
-    # Detect ChemDraw / ChemScript DLL
-    # Search order:
-    #   1. Local chemscript_dlls/ directory (portable deployment with bundled DLLs)
-    #   2. Standard PerkinElmerInformatics install paths (ChemOffice2016, then 2015)
-    #   3. CambridgeSoft install paths (older naming convention)
-    found_version = None
+    # --- Detect ChemScript DLLs ---
+    # 1. Local bundled DLLs
     script_dir = os.path.dirname(os.path.abspath(__file__))
     local_dll_dir = os.path.join(script_dir, "chemscript_dlls")
+    dll_info = _find_chemscript_dlls(local_dll_dir)
+    if dll_info:
+        print(f"  ChemScript DLL: {dll_info['managed_path']} (bundled)")
 
-    # Check local bundled DLLs first
-    for assembly in ["CambridgeSoft.ChemScript16", "CambridgeSoft.ChemScript15"]:
-        dll_file = os.path.join(local_dll_dir, f"{assembly}.dll")
-        if os.path.isfile(dll_file):
-            cfg["dll_dir"] = local_dll_dir
-            cfg["assembly"] = assembly
-            found_version = f"local ({assembly})"
-            print(f"  ChemScript DLL: {dll_file} (bundled)")
-            break
+    # 2. Auto-detect via ChemDraw COM registry
+    if not dll_info:
+        root = _find_chemdraw_root()
+        if root:
+            print(f"  ChemDraw root:  {root}")
+            dll_info = _find_chemscript_dlls(root)
+            if dll_info:
+                print(f"  Managed DLL:    {dll_info['managed_path']}")
+                print(f"  Native DLL:     {dll_info['native_path']}")
+                print(f"  Bitness:        {dll_info['bitness']}-bit")
+        else:
+            print("  ChemDraw:       not found in COM registry")
 
-    # Check standard install paths
-    if not found_version:
-        prog_x86 = os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)")
-        search_bases = [
-            os.path.join(prog_x86, "PerkinElmerInformatics"),
-            os.path.join(prog_x86, "CambridgeSoft"),
-        ]
-        for pei_base in search_bases:
-            if found_version:
-                break
-            for version_dir, assembly in [
-                ("ChemOffice2016", "CambridgeSoft.ChemScript16"),
-                ("ChemOffice2015", "CambridgeSoft.ChemScript15"),
-            ]:
-                dll_dir = os.path.join(pei_base, version_dir, "ChemScript", "Lib", "Net")
-                dll_file = os.path.join(dll_dir, f"{assembly}.dll")
-                if os.path.isfile(dll_file):
-                    cfg["dll_dir"] = dll_dir
-                    cfg["assembly"] = assembly
-                    found_version = version_dir
-                    print(f"  ChemScript DLL: {dll_file}")
-                    break
+    if dll_info:
+        cfg["dll_dir"] = dll_info["dll_dir"]
+        cfg["assembly"] = dll_info["assembly"]
+        cfg["bitness"] = dll_info["bitness"]
+    else:
+        print("  WARNING: ChemScript DLLs not found.")
+        print("  ChemDraw with ChemScript must be installed.")
 
-    if not found_version:
-        print("  WARNING: ChemScript DLL not found.")
-        print(f"  Searched: {local_dll_dir}")
-        print(f"  Searched: Program Files (x86)\\PerkinElmerInformatics\\ChemOffice20XX")
-        print(f"  Searched: Program Files (x86)\\CambridgeSoft\\ChemOffice20XX")
-        print("  Either install ChemDraw with ChemScript, or copy the DLLs to:")
-        print(f"    {local_dll_dir}")
-        print("  Required: CambridgeSoft.ChemScript16.dll + ChemScript160.dll")
+    # --- Detect Python for ChemScript ---
+    bitness = dll_info["bitness"] if dll_info else None
+    py = cfg.get("python32") or _find_python_for_chemscript(bitness)
+    if py:
+        cfg["python32"] = py
+        print(f"  Python:         {py}")
+    else:
+        print("  WARNING: No suitable Python found for ChemScript.")
+        if bitness == 32:
+            print("  Run 'cdxml-doctor' for 32-bit Python setup instructions.")
+        elif bitness == 64:
+            print("  A 64-bit Python with pythonnet should work.")
+        else:
+            print("  Run 'cdxml-doctor' for setup instructions.")
 
     _save_config(cfg)
     print(f"\n  Config saved to: {CONFIG_PATH}")
