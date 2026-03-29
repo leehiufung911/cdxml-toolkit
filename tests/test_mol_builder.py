@@ -26,21 +26,34 @@ from cdxml_toolkit.naming.mol_builder import (
 
 
 # ---------------------------------------------------------------------------
-# Helper: check if ChemScript is available
+# Helper: check if a name-to-structure backend is available
 # ---------------------------------------------------------------------------
 
-def _chemscript_available():
+def _name_resolver_available():
+    """Return True if ChemScript or OPSIN can resolve IUPAC names."""
+    # Try ChemScript first
     try:
         from cdxml_toolkit.chemdraw.chemscript_bridge import ChemScriptBridge
         ChemScriptBridge()
         return True
     except Exception:
-        return False
+        pass
+    # Try OPSIN (bundled offline fallback)
+    try:
+        from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
+        if ensure_java_on_path():
+            from py2opsin import py2opsin as _py2opsin
+            smi = _py2opsin("benzene")
+            if smi:
+                return True
+    except Exception:
+        pass
+    return False
 
 
 needs_chemscript = pytest.mark.skipif(
-    not _chemscript_available(),
-    reason="ChemScript not available",
+    not _name_resolver_available(),
+    reason="No name resolver available (neither ChemScript nor OPSIN)",
 )
 
 

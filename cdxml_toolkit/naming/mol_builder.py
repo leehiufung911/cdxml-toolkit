@@ -350,6 +350,20 @@ def _try_validate(name: str, use_network: bool = True) -> Optional[str]:
     if smi:
         return smi
 
+    # OPSIN fallback (offline IUPAC name resolution, bundled JRE)
+    try:
+        from cdxml_toolkit.resolve.jre_manager import ensure_java_on_path
+        if ensure_java_on_path():
+            import warnings
+            from py2opsin import py2opsin as _py2opsin
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                smi = _py2opsin(name)
+            if smi and Chem.MolFromSmiles(smi):
+                return _rdkit_canonical(smi)
+    except (ImportError, FileNotFoundError):
+        pass
+
     # PubChem fallback (for common names)
     if use_network:
         try:
