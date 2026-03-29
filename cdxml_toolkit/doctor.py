@@ -174,15 +174,34 @@ def _setup_chemscript():
         return
 
     # 32-bit: need a 32-bit conda env
-    user = os.environ.get("USERNAME", "YOU")
+    # Find conda executable (it's a .bat on Windows, not directly callable)
+    import shutil
+    conda_exe = shutil.which("conda")
+    if not conda_exe:
+        # Derive from current Python path: .../miniconda3/envs/cdxml/python.exe
+        # → .../miniconda3/Scripts/conda.exe
+        conda_root = sys.executable
+        for _ in range(3):  # walk up from envs/name/python.exe
+            conda_root = os.path.dirname(conda_root)
+        for candidate in [
+            os.path.join(conda_root, "Scripts", "conda.exe"),
+            os.path.join(conda_root, "condabin", "conda.bat"),
+        ]:
+            if os.path.isfile(candidate):
+                conda_exe = candidate
+                break
+    if not conda_exe:
+        print("  Could not find conda. Install it or add it to PATH.")
+        return
+
     py32_path = os.path.join(
-        os.path.expanduser("~"), "miniconda3", "envs",
-        "chemscript32", "python.exe",
+        os.path.dirname(os.path.dirname(conda_exe)),
+        "envs", "chemscript32", "python.exe",
     )
 
     print("  32-bit ChemScript requires a 32-bit Python environment.")
     print("  The doctor will run the following commands:\n")
-    print("    set CONDA_SUBDIR=win-32 && conda create -n chemscript32 python=3.10 pip -y")
+    print(f"    {conda_exe} create -n chemscript32 python=3.10 pip -y  (with CONDA_SUBDIR=win-32)")
     print(f"    {py32_path} -m pip install pythonnet")
     print()
 
@@ -201,7 +220,7 @@ def _setup_chemscript():
     env = os.environ.copy()
     env["CONDA_SUBDIR"] = "win-32"
     r = subprocess.run(
-        ["conda", "create", "-n", "chemscript32", "python=3.10", "pip", "-y"],
+        [conda_exe, "create", "-n", "chemscript32", "python=3.10", "pip", "-y"],
         env=env, capture_output=True, text=True,
     )
     if r.returncode != 0:
