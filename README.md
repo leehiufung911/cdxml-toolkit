@@ -10,7 +10,7 @@ The goal: any chemist with a consumer GPU can run a local LLM agent that helps w
 
 *The user pastes an image of a Boc deprotection, asks for a modified version with a different scaffold plus two extra reaction steps. The agent resolves all building blocks, applies transformations with structural diffs, and renders a publication-ready 3-step scheme — all via MCP tool calls, no hand-written SMILES.*
 
-**[Full showcase: what it can do, design decisions, and test results](SHOWCASE.md)**
+**[Explanation/Showcase](SHOWCASE.md)**
 
 ## Installation
 
