@@ -8,7 +8,7 @@ The goal: any chemist with a consumer GPU can run a local LLM agent that helps w
 
 ![Agent builds a 3-step reaction scheme from an image and natural language instructions](docs/images/showcase-example.webp)
 
-*The user pastes an image of a Boc deprotection, asks for a modified version with a different scaffold plus two extra reaction steps. The agent resolves all building blocks, applies transformations with structural diffs, and renders a publication-ready 3-step scheme — all via MCP tool calls, no hand-written SMILES.*
+*The user pastes an image of a Boc deprotection, asks for a modified version with a different scaffold plus two extra reaction steps. The agent resolves all building blocks, applies transformations with structural diffs, and renders a .cdxml native 3-step scheme — all via MCP tool calls, no hand-written SMILES.*
 
 **[Explanation/Showcase](SHOWCASE.md)**
 
